@@ -1,0 +1,22 @@
+# Entornos virtuales
+.env
+venv/
+env/
+
+# Archivos compilados de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Variables de entorno
+.env
+
+# Base de datos vectorial local (ChromaDB)
+chroma_data/
+
+# Imágenes de prueba (opcional, para no llenar el repo)
+*.jpg
+*.png
+*.jpeg
+
+.vscode/
