@@ -1,16 +1,14 @@
 
 services:
   pyimage-service:
-    build: .
+    build: ./server
     container_name: server-pyimage-aisentinel
     ports:
       - "${PORT:-8000}:8000"
     volumes:
-      - .:/app
-      - /app/venv # Evitar que los archivos de la máquina host se mezclen con los del contenedor
-      - ./chroma_data:/app/chroma_data # Volumen para persistencia de datos de ChromaDB
+      - ./server:/app
+      - /app/venv
+      - ./server/chroma_data:/app/chroma_data
     env_file:
       - .env
-    #devices:
-      # - "/dev/video0:/dev/video0" # Permitir acceso a la cámara -> Wilson - Investigar si es ncesario
     restart: always

@@ -11,13 +11,8 @@ __pycache__/
 # Variables de entorno
 .env
 
-# Base de datos vectorial local (ChromaDB)
+# Base de datos vectorial local
 chroma_data/
-
-# Imágenes de prueba (opcional, para no llenar el repo)
-*.jpg
-*.png
-*.jpeg
 
 .vscode/
 

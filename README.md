@@ -1,47 +1,77 @@
-# AI Sentinel - PyImage Server
+# AI Sentinel
 
-Microservicio de visión computacional basado en **FastAPI y Socket.io**. Encargado del reconocimiento facial, detección de asistencia y validación de uniformes mediante búsqueda vectorial.
+Sistema de visión computacional dividido en una arquitectura Cliente-Servidor para el control de asistencia y seguridad escolar.
 
-## 📋 Requisitos Previos
+## Estructura del Proyecto
 
-Para este desarrollo utilizaremos **Docker**.
+El proyecto está dividido en dos grandes áreas:
 
-1. **Docker Desktop**: [Descargar e instalar aquí](https://www.docker.com/products/docker-desktop/).
-   * *Asegúrate de que Docker esté abierto antes de ejecutar los comandos.*
-2. **VS Code Extensions** (Recomendado):
-   * Extension Pack de Python.
-   * Extensión de Docker.
+* **`/server` (El Cerebro):** Contiene la API, la Base de Datos Vectorial (ChromaDB) y la lógica de Inteligencia Artificial. Corre sobre Docker.
+* **`/clients` (Los Ojos):** Scripts de Python independientes que ejecutan la cámara, capturan fotos y las envían al servidor.
 
-## Configuración inicial
+---
 
-### 1. Clonar el repositorio
-```powershell
-git clone [https://github.com/Grupo1-AISentinel/server-pyimage-aisentinel.git](https://github.com/Grupo1-AISentinel/
-server-pyimage-aisentinel.git)
-cd server-pyimage-aisentinel
-```
+## Lado del SERVIDOR (Backend)
 
-### 2. Muevete a la rama develop y crea tu rama para la feature siguiendo el estándar: feature/carnet/tarea
-```powershell
-git checkout develop
-git checkout -b feature/carnet/tarea
-```
-### 3. Coloca las variables de entorno .env
-### 4. Levanta el contenedor de docker
-```powershell
-docker-compose up --build
-```
-## NOTA:
-Si quieres evitar las advertencias de vscode con los paquetes. (Necesario tener python 10.0)
-### 1. Crea un entorno virtual
-```powershell
-python -m venv venv
-.\venv\Scripts\activate
-```
+Este componente debe correr siempre en la computadora principal o servidor.
 
-### 2. Intalar las dependencias básicas
-```powershell
-pip install fastapi uvicorn pydantic python-dotenv
-```
+### Requisitos
+* Docker Desktop instalado y corriendo.
+* Archivo `.env` configurado en la raíz.
 
-### 3. Selecciona el interprete en vscode con ctrl + p -> Python: select interpreter
+### Puesta en Marcha
+1.  Ubícate en la raíz del proyecto (donde está el `docker-compose.yml`).
+2.  Levanta el servicio:
+    ```powershell
+    docker-compose up --build
+    ```
+3.  El servidor estará escuchando en: `http://localhost:8000`
+
+---
+
+## 📷 2. Lado del CLIENTE (Cámaras y Registro)
+
+Estos scripts pueden correr en cualquier computadora conectada a la misma red que el servidor (o la misma máquina).
+
+### Requisitos del Cliente
+Necesitas Python instalado en tu máquina (no Docker).
+
+1.  Ve a la carpeta de clientes:
+    ```powershell
+    cd clients/totem
+    ```
+2.  Crea un entorno virtual (opcional pero recomendado):
+    ```powershell
+    python -m venv venv
+    .\venv\Scripts\activate
+    ```
+3.  Instala las dependencias LIGERAS del cliente:
+    ```powershell
+    pip install -r requirements.txt
+    ```
+    *(Nota: Este requirements.txt solo debe tener `opencv-python` y `requests`).*
+
+### Ejecución
+
+* **Para el Tótem de Entrada (Reconocimiento en Vivo):**
+    ```powershell
+    python totem_camera.py
+    ```
+
+* **Para Registrar Nuevos Alumnos (Herramienta Administrativa):**
+    ```powershell
+    cd ../admin_tools
+    python register.py
+    ```
+
+---
+
+## 🔧 Desarrollo y Contribución
+
+### Git Flow
+1.  **Rama Principal:** `develop`
+2.  **Nueva Funcionalidad:** Crea tu rama `feature/carnet/nombre-tarea`.
+
+### Solución de Problemas Comunes
+* **Error de conexión en el cliente:** Verifica que `API_URL` en los scripts de Python apunte a la IP correcta de tu servidor Docker (ej. `localhost` o `192.168.x.x`).
+* **Docker no levanta:** Asegúrate de que el puerto 8000 no esté ocupado.
