@@ -32,7 +32,7 @@ git checkout -b feature/carnet/tarea
 docker-compose up --build
 ```
 ## NOTA:
-Si quieres evitar las advertencias de vscode con los paquetes. (Necesario tener python 12.0)
+Si quieres evitar las advertencias de vscode con los paquetes. (Necesario tener python 10.0)
 ### 1. Crea un entorno virtual
 ```powershell
 python -m venv venv

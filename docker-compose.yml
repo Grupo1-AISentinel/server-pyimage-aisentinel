@@ -8,6 +8,7 @@ services:
     volumes:
       - .:/app
       - /app/venv # Evitar que los archivos de la máquina host se mezclen con los del contenedor
+      - ./chroma_data:/app/chroma_data # Volumen para persistencia de datos de ChromaDB
     env_file:
       - .env
     #devices:

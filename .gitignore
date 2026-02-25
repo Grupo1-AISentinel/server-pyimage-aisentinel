@@ -20,3 +20,5 @@ chroma_data/
 *.jpeg
 
 .vscode/
+
+test/img

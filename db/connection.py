@@ -1,21 +1,48 @@
 import chromadb
 import os
-from dotenv import load_dotenv
+from datetime import datetime
 
-load_dotenv()
+# Configuración de persistencia
+CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma_data")
+client = chromadb.PersistentClient(path=CHROMA_PATH)
 
-CHROMA_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_data")
+# Obtener siempre la colección
+def get_faces_collection():
+    return client.get_or_create_collection(
+        name="student_faces",
+        metadata={"hnsw:space": "l2"}
+    )
+    
+# Guardar el vector facial con su metadata asociada
+def save_student_vector(student_id: str, vector: list, metadata: dict):
+    
+    collection = get_faces_collection()
+    
+    metadata["created_at"] = datetime.now().isoformat()
+    metadata["student_id"] = student_id 
+    
+    collection.add(
+        ids=[student_id],
+        embeddings=[vector],
+        metadatas=[metadata]
+    )
+    return True
 
-def get_db_client():
-    """
-    Inicializa y devuelve el cliente de ChromaDB persistente.
-    """
-    client = chromadb.PersistentClient(path=CHROMA_PATH)
-    return client
+# Buscar el vector más similar en la colección y devolver su metadata
+def search_student_by_vector(vector: list, limit: int = 1):
 
-def get_collection(collection_name: str):
-    """
-    Obtiene o crea una colección específica (ej. 'alumnos' o 'uniformes').
-    """
-    client = get_db_client()
-    return client.get_or_create_collection(name=collection_name)
+    collection = get_faces_collection()
+    
+    results = collection.query(
+        query_embeddings=[vector],
+        n_results=limit
+    )
+    
+    if not results['ids'] or not results['ids'][0]:
+        return None
+
+    return {
+        "student_id": results['ids'][0][0],
+        "metadata": results['metadatas'][0][0],
+        "distance": results['distances'][0][0]
+    }
