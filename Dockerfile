@@ -1,5 +1,5 @@
 # Usamos una versión estable de Python sobre Linux
-FROM python:3.12-slim
+FROM python:3.10-slim-bookworm
 
 # Instalar dependencias del sistema
 RUN apt-get update && apt-get install -y \
@@ -10,10 +10,13 @@ RUN apt-get update && apt-get install -y \
     libx11-dev \
     libgtk-3-dev \
     libgl1 \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Establecemos el directorio de trabajo
 WORKDIR /app
+
+RUN pip install git+https://github.com/ageitgey/face_recognition_models
 
 # Copiamos los archivos de dependencias
 COPY requirements.txt .
