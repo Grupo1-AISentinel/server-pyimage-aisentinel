@@ -1,20 +1,42 @@
-from fastapi import FastAPI
-from api.routes import router as api_router
-from dotenv import load_dotenv
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+import shutil
 import os
+import logging
 
-load_dotenv()
+from services.biometric_engine import BiometricEngine
+from core.seeder import seed_users
 
-app = FastAPI(title="AI Sentinel API")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("AISentinel")
 
-app.include_router(api_router, prefix="/pyimage/api/v1")
+app = FastAPI(title="AISentinel")
 
-PORT = int(os.getenv("PORT", 8000))
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- EVENTO DE INICIO
+@app.on_event("startup")
+async def startup_event():
+
+    logger.info("Servidor Iniciando...")
+    seed_users()
+    # Mostrar un mensaje de bienvenida con datos del reconocimineto facial
+    model = os.getenv("MODEL_FACE_RECOGNITION", "hog")
+    logger.info(f"Modelo de Reconocimiento Facial: {model.upper() if model else 'HOG (por defecto)'}")
+    threshold = os.getenv("FACE_RECOGNITION_THRESHOLD","sin especificar")
+    logger.info(f"Umbral de Reconocimiento: {threshold}")
 
 @app.get("/")
-def home():
-    return {"project": "AI Sentinel", "docs": "/docs"}
+def read_root():
+    return {"status": "online", "service": "AISentinel Facial Recognition API"}
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
