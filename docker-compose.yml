@@ -1,7 +1,7 @@
-
 services:
   pyimage-service:
     build: ./server
+    image: aisentinel-backend:latest
     container_name: server-pyimage-aisentinel
     ports:
       - "${PORT:-8000}:8000"
