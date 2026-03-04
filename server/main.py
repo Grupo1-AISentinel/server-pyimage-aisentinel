@@ -1,19 +1,18 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-import shutil
 import os
 import logging
 
-from services.biometric_engine import BiometricEngine
-from core.seeder import seed_users
+# Importar las rutas desde la carpeta api
+from api.routes import router as api_router 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AISentinel")
 
 app = FastAPI(title="AISentinel")
 
-# CORS
+# Configuración estricta de CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,16 +21,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- EVENTO DE INICIO
+app.include_router(api_router)
+
 @app.on_event("startup")
 async def startup_event():
-
-    logger.info("Servidor Iniciando...")
-    seed_users()
-    # Mostrar un mensaje de bienvenida con datos del reconocimineto facial
+    logger.info("🟢 Servidor AI Sentinel Iniciado...")
     model = os.getenv("MODEL_FACE_RECOGNITION", "hog")
-    logger.info(f"Modelo de Reconocimiento Facial: {model.upper() if model else 'HOG (por defecto)'}")
-    threshold = os.getenv("FACE_RECOGNITION_THRESHOLD","sin especificar")
+    logger.info(f"Modelo Facial: {model.upper()}")
+    threshold = os.getenv("FACE_RECOGNITION_THRESHOLD", "0.6")
     logger.info(f"Umbral de Reconocimiento: {threshold}")
 
 @app.get("/")
