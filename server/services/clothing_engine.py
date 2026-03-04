@@ -62,8 +62,7 @@ class ClothingEngine:
 
         if not vectors_buffer:
             raise ValueError("[ERROR CRITICO] No se pudo extraer ropa de ninguna imagen.")
-
-        # Vector Maestro (Promedio matemático)
+        
         master_vector = np.mean(vectors_buffer, axis=0).tolist()
         
         metadata = {"tipo": uniform_type, "valido": True}
@@ -71,3 +70,20 @@ class ClothingEngine:
         
         print(f"[SUCCESS] Uniforme '{uniform_type}' registrado exitosamente con ID '{uniform_id}'.")
         return True
+    
+    @staticmethod
+    def extract_all_torsos(frame):
+        """Detecta TODAS las personas y devuelve sus torsos junto con su ubicación (box)"""
+        results = yolo_model(frame, classes=[0], device=DEVICE, verbose=False)
+        personas = []
+        for result in results:
+            for box in result.boxes:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                y_start = y1 + int((y2 - y1) * 0.20)
+                torso = frame[y_start:y2, x1:x2]
+                
+                personas.append({
+                    "box": (x1, y1, x2, y2), # Coordenadas del cuerpo
+                    "torso": torso
+                })
+        return personas
