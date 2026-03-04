@@ -1,7 +1,7 @@
 import face_recognition
 import numpy as np
 import os
-from db.connection import save_student_vector, search_student_by_vector
+from db.cruds.crud_student import save_student_vector, search_student_by_vector
 
 
 # Motor de reconocimiento facial: registra y reconoce rostros usando ChromaDB
