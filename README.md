@@ -1,77 +1,60 @@
-# AI Sentinel
+# AI Sentinel - Arquitectura General
 
-Sistema de visión computacional dividido en una arquitectura Cliente-Servidor para el control de asistencia y seguridad escolar.
+Sistema de visión computacional dividido en una arquitectura Cliente-Servidor para el control de asistencia y seguridad escolar con validación estricta de uniformes mediante Inteligencia Artificial (YOLO11 + ResNet18).
 
-## Estructura del Proyecto
+## 🏗️ Estructura del Proyecto
 
-El proyecto está dividido en dos grandes áreas:
+El proyecto está dividido en dos grandes áreas, cada una con su propia documentación detallada:
 
-* **`/server` (El Cerebro):** Contiene la API, la Base de Datos Vectorial (ChromaDB) y la lógica de Inteligencia Artificial. Corre sobre Docker.
-* **`/clients` (Los Ojos):** Scripts de Python independientes que ejecutan la cámara, capturan fotos y las envían al servidor.
-
----
-
-## Lado del SERVIDOR (Backend)
-
-Este componente debe correr siempre en la computadora principal o servidor.
-
-### Requisitos
-* Docker Desktop instalado y corriendo.
-* Archivo `.env` configurado en la raíz.
-
-### Puesta en Marcha
-1.  Ubícate en la raíz del proyecto (donde está el `docker-compose.yml`).
-2.  Levanta el servicio:
-    ```powershell
-    docker-compose up --build
-    ```
-3.  El servidor estará escuchando en: `http://localhost:8000`
+- **[`/server` (El Cerebro)](./server/README.md):** Contiene la API, la Base de Datos Vectorial (ChromaDB) y la lógica Híbrida de Inteligencia Artificial (YOLO + ResNet). Corre sobre Docker.
+- **[`/clients` (Los Ojos)](./clients/README.md):** Scripts de Python independientes que ejecutan la cámara, capturan fotos en vivo del tótem y las envían al servidor para su procesamiento.
 
 ---
 
-## 📷 2. Lado del CLIENTE (Cámaras y Registro)
+## 📋 Requisitos Generales del Sistema
 
-Estos scripts pueden correr en cualquier computadora conectada a la misma red que el servidor (o la misma máquina).
-
-### Requisitos del Cliente
-Necesitas Python instalado en tu máquina (no Docker).
-
-1.  Ve a la carpeta de clientes:
-    ```powershell
-    cd clients/totem
-    ```
-2.  Crea un entorno virtual (opcional pero recomendado):
-    ```powershell
-    python -m venv venv
-    .\venv\Scripts\activate
-    ```
-3.  Instala las dependencias LIGERAS del cliente:
-    ```powershell
-    pip install -r requirements.txt
-    ```
-    *(Nota: Este requirements.txt solo debe tener `opencv-python` y `requests`).*
-
-### Ejecución
-
-* **Para el Tótem de Entrada (Reconocimiento en Vivo):**
-    ```powershell
-    python totem_camera.py
-    ```
-
-* **Para Registrar Nuevos Alumnos (Herramienta Administrativa):**
-    ```powershell
-    cd ../admin_tools
-    python register.py
-    ```
+1. **Hardware del Servidor:** PC con capacidad para correr modelos YOLO (idealmente con GPU NVIDIA, pero soporta CPU).
+2. **Software del Servidor:** Docker y Docker Compose instalados.
+3. **Hardware de Clientes:** Cámaras web conectadas a computadoras (Tótems).
+4. **Red:** Los clientes deben estar en la misma red local (LAN) o tener acceso a la IP del servidor.
 
 ---
 
-## 🔧 Desarrollo y Contribución
+## 🚀 Guía Rápida de Ejecución
 
-### Git Flow
+Esta es una vista general. Para detalles, consulta el README de cada carpeta específica.
+
+### 1. Levantar el Servidor
+
+```powershell
+# En la raíz del proyecto
+docker-compose up --build -d
+```
+
+El servidor de Inteligencia Artificial quedará operando en `http://localhost:8000`.
+
+### 2. Levantar la Cámara Cliente
+
+```powershell
+cd clients/totem
+python totem_camera.py
+```
+
+---
+
+## 💡 Recomendaciones del Sistema Híbrido AI
+
+Hemos alcanzado **Cero Falsos Positivos** usando una arquitectura híbrida:
+
+- **Detección Estructural (YOLO):** Ubica _dónde_ está la ropa de interés (Ej. Chumpas, pantalones).
+- **Validación de Identidad (ResNet18):** Recorta la prenda usando el cuadro que dio YOLO y usa ResNet para confirmar si el diseño/color coincide con los uniformes de la Base de Datos.
+
+**Para mantener el sistema dinámico:**
+No re-entrenes a YOLO cada vez que cambie la chumpa de promoción. Utiliza el endpoint del servidor `/register/uniform` para inyectar a la base de datos la foto de la "nueva chumpa promocional".
+
+---
+
+## 🔧 Git Flow y Contribución
+
 1.  **Rama Principal:** `develop`
 2.  **Nueva Funcionalidad:** Crea tu rama `feature/carnet/nombre-tarea`.
-
-### Solución de Problemas Comunes
-* **Error de conexión en el cliente:** Verifica que `API_URL` en los scripts de Python apunte a la IP correcta de tu servidor Docker (ej. `localhost` o `192.168.x.x`).
-* **Docker no levanta:** Asegúrate de que el puerto 8000 no esté ocupado.

@@ -1,6 +1,8 @@
 services:
   pyimage-service:
-    build: ./server
+    build: 
+      context: .
+      dockerfile: server/Dockerfile
     image: aisentinel-backend:latest
     container_name: server-pyimage-aisentinel
     ports:
