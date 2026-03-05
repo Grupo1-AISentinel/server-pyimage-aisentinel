@@ -65,7 +65,7 @@ class BiometricEngine:
             color = (0, 0, 255)
             confidence = 0.0
 
-            threshold = float(os.getenv("FACE_RECOGNITION_THRESHOLD", 0.45))
+            threshold = float(0.40)
 
             if match and match["distance"] < threshold:
                 identity = match["metadata"].get("full_name", "Estudiante")
