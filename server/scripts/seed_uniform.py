@@ -26,15 +26,15 @@ def populate_uniforms():
 
     try:
 
-        ClothingEngine.register_uniform(
-            uniform_id="uniform_jacket", 
-            uniform_type="jacket promo 33", 
+        ClothingEngine.register_clothing_item(
+            item_id="uniform_jacket_promo33", 
+            item_type="jacket", 
             images_list=images_promo33
         )
         
-        ClothingEngine.register_uniform(
-            uniform_id="uniform_clasic", 
-            uniform_type="clasic", 
+        ClothingEngine.register_clothing_item(
+            item_id="uniform_jacket_clasic", 
+            item_type="jacket", 
             images_list=images_clasic
         )
     except Exception as e:

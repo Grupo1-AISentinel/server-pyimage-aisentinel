@@ -25,8 +25,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copiamos el resto del código
-COPY . .
+# Copiamos el resto del código del servidor
+COPY server/ .
 
 # Exponemos el puerto
 EXPOSE 8000
