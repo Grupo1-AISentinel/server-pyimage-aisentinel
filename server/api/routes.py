@@ -1,11 +1,10 @@
 from fastapi import APIRouter, UploadFile, File
 import cv2
 import numpy as np
-from api.schemas import StudentRegister, DetectResponse
+from api.schemas import StudentRegister, DetectResponse, UniformRegister
 
 from services.biometric_engine import BiometricEngine
 from services.clothing_engine import ClothingEngine
-from db.cruds.crud_uniform import search_uniform_by_vector
 
 router = APIRouter()
 engine = BiometricEngine()
@@ -18,39 +17,56 @@ def health_check():
 def register_student(datos: StudentRegister):
     return {"message": f"Estudiante {datos.card} listo para procesar"}
 
+@router.post("/register/uniform")
+def register_uniform(datos: UniformRegister):
+    success = ClothingEngine.register_clothing_item(datos.item_id, datos.item_type, datos.images)
+    if success:
+        return {"message": f"Prenda '{datos.item_type}' ({datos.item_id}) registrada exitosamente en ChromaDB."}
+    return {"error": "No se pudo registrar la prenda."}
+
 @router.post("/api/detect", response_model=DetectResponse)
 async def detect_student(file: UploadFile = File(...)):
     contents = await file.read()
     nparr = np.frombuffer(contents, np.uint8)
     frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    
-    # Biometría
-    student = engine.recognize_faces_in_frame(frame)
-    if not student:
-        return DetectResponse(status="No hay rostro reconocido")
 
-    # Ropa (YOLO + ResNet)
-    torso = ClothingEngine.extract_torso(frame)
-    if torso is not None:
-        clothing_vector = ClothingEngine.get_clothing_embedding(torso)
-        
-        # Consultar DB
-        uniforme_detectado = search_uniform_by_vector(clothing_vector)
-        
+    # Detectar TODOS los rostros en el frame con altisima precisión
+    students_detected = engine.recognize_faces_in_frame(frame)
+    if not students_detected:
+        return DetectResponse(status="No hay rostros reconocidos", students=[])
+
+    # Detectar TODOS los cuerpos en el frame mediante YOLO
+    cuerpos = ClothingEngine.extract_all_torsos(frame)
+    
+    resultados_finales = []
+
+    # Unir cada Rostro con su respectivo Cuerpo
+    for student in students_detected:
+        top, right, bottom, left = student["location"]
+        # Calcular el centro del rostro (Punto X, Y)
+        face_x = (left + right) // 2
+        face_y = (top + bottom) // 2
+
         has_uniform = False
-        distancia = 999.0
-        if uniforme_detectado:
-            distancia = uniforme_detectado["distance"]
-            has_uniform = bool(distancia < 15.0)
+        clothing_details = "Rostro sin cuerpo visible"
 
-        return DetectResponse(
-            status="Alumno detectado",
-            student=student,
-            has_uniform=has_uniform,
-            clothing_distance=distancia
-        )
-    
+        # Buscar en qué cuerpo encaja este rostro
+        for cuerpo in cuerpos:
+            bx1, by1, bx2, by2 = cuerpo["box"]
+            
+            # Si el centro del rostro está dentro del cuadro de este cuerpo entero
+            if bx1 <= face_x <= bx2 and by1 <= face_y <= by2:
+                # Ya tenemos a la persona validada, revisamos la ropa que lleva usando el modelo especial
+                crop = cuerpo["crop"]
+                has_uniform, clothing_details = ClothingEngine.validate_uniform(crop)
+                break # Ya evaluamos la ropa de este alumno, pasamos al siguiente
+        
+        # Inyectar los resultados de ropa al diccionario del estudiante
+        student["has_uniform"] = has_uniform
+        student["clothing_details"] = clothing_details
+        resultados_finales.append(student)
+
     return DetectResponse(
-        status="Rostro detectado, pero no se pudo ver el uniforme", 
-        student=student
+        status="Alumnos procesados",
+        students=resultados_finales
     )

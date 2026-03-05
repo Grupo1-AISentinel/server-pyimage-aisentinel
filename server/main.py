@@ -76,10 +76,6 @@ def start_socket():
 @app.on_event("startup")
 async def startup_event():
     logger.info("🟢 Servidor AI Sentinel Iniciado...")
-    model = os.getenv("MODEL_FACE_RECOGNITION", "hog")
-    logger.info(f"Modelo Facial: {model.upper()}")
-    threshold = os.getenv("FACE_RECOGNITION_THRESHOLD", "0.6")
-    logger.info(f"Umbral de Reconocimiento: {threshold}")
 
 @app.get("/")
 def read_root():

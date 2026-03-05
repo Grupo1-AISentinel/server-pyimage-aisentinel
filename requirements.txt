@@ -7,10 +7,11 @@ pydantic==2.6.3
 python-socketio[client]==5.11.1
 numpy<2.0.0
 python-multipart
-ultralytics
+ultralytics>=8.3.0
 torch
 torchvision
 # versión sin grafica
 # opencv-python-headless
 opencv-python
 requests
+huggingface-hub
