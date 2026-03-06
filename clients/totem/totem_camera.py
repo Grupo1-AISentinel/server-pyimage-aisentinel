@@ -73,20 +73,27 @@ def open_cam():
         )
 
         for det in detecciones_actuales:
-            top, right, bottom, left = det["location"]
+            top, right, bottom, left = det.get("location", [0, 0, 0, 0])
 
             # Extraer los datos del JSON
             nombre = det.get("identity", "Desconocido")
             tiene_uniforme = det.get("has_uniform", False)
+            clothing_boxes = det.get("clothing_boxes", [])
+            needs_full_body = det.get("needs_full_body_view", False)
 
             # Formatear el texto
             texto_uniforme = "UNIFORME: SI" if tiene_uniforme else "UNIFORME: NO"
             texto_final = f"{nombre} | {texto_uniforme}"
 
-            # Cambiar el color del recuadro: Verde (Con Uniforme) o Rojo (Sin Uniforme)
-            color_recuadro = (0, 255, 0) if tiene_uniforme else (0, 0, 255)
+            # Cambiar el color del recuadro de la CABEZA:
+            if nombre == "Desconocido": # No coincide con estudiante
+                color_recuadro = (0, 0, 255) # Rojo
+            elif tiene_uniforme:        # Coincide y tiene uniforme
+                color_recuadro = (0, 255, 0) # Verde
+            else:                       # Coincide pero no tiene uniforme
+                color_recuadro = (0, 165, 255) # Naranja
 
-            # Dibujar en pantalla
+            # Dibujar caja del ROSTRO
             cv2.rectangle(frame, (left, top), (right, bottom), color_recuadro, 2)
             cv2.putText(
                 frame,
@@ -97,6 +104,39 @@ def open_cam():
                 color_recuadro,
                 2,
             )
+
+            # DIBUJAR MASCARAS DE ROPA
+            for cb in clothing_boxes:
+                c_name = cb.get("class", "Ropa")
+                cx1, cy1, cx2, cy2 = cb.get("box", [0,0,0,0])
+                c_valido = cb.get("valid", False)
+                
+                # Ropa: Verde Oscuro si pasó la base de datos, Rojo si no coincide (a petición del usuario)
+                color_ropa = (0, 100, 0) if c_valido else (0, 0, 255)
+                
+                # Se dibuja un rectangulo mas sutil para la ropa
+                cv2.rectangle(frame, (cx1, cy1), (cx2, cy2), color_ropa, 2)
+                cv2.putText(
+                    frame,
+                    c_name.upper(),
+                    (cx1, cy1 - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    color_ropa,
+                    2,
+                )
+
+            # ADVERTENCIA DE CUERPO COMPLETO
+            if needs_full_body:
+                cv2.putText(
+                    frame,
+                    "ACERQUESE/ALEJESE PARA VER PANTALON",
+                    (50, 450), # En la parte inferior de la pantalla
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 0, 255), # Rojo brillante
+                    2,
+                )
 
         cv2.imshow("Totem AI Sentinel - En vivo", frame)
 
