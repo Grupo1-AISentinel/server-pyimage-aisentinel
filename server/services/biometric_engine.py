@@ -74,6 +74,48 @@ class BiometricEngine:
         print(f"Rostro registrado exitosamente para el estudiante '{full_name}' con ID '{student_id}'.")
     
         return True
+    
+    def register_face_from_socket(self, student_id: str, full_name: str, images_list: list):
+        """
+        Método especializado para registros vía Socket.io.
+        """
+        vectors_buffer = []
+        
+        print(f"[SOCKET-IA] Iniciando procesamiento biométrico para {full_name}...")
+
+        for i, image_np in enumerate(images_list):
+            try:
+                # Usamos self para llamar al método de localización si no es estático
+                # O BiometricEngine si el otro sigue siendo staticmethod
+                face_locations = BiometricEngine._get_face_locations_yolo(image_np)
+                
+                if len(face_locations) == 1:
+                    encoding = face_recognition.face_encodings(image_np, face_locations, num_jitters=1)[0]
+                    vectors_buffer.append(encoding.tolist())
+                    print(f"   ✅ Imagen {i+1}: Rostro detectado.")
+                else:
+                    print(f"   ⚠️ Imagen {i+1}: Se detectaron {len(face_locations)} rostros.")
+
+            except Exception as e:
+                print(f"   ❌ Error procesando imagen {i+1}: {e}")
+
+        if not vectors_buffer:
+            return False
+
+        master_vector = np.mean(vectors_buffer, axis=0).tolist()
+        
+        metadata = {
+            "student_id": student_id,
+            "full_name": full_name,
+            "source": "socket_bidirectional"
+        }
+
+        try:
+            save_student_vector(student_id, master_vector, metadata)
+            return True
+        except Exception as e:
+            print(f"❌ Error al guardar: {e}")
+            return False
 
     # Reconocer rostros en un frame: recibe un frame RGB y devuelve lista de resultados
     @staticmethod
