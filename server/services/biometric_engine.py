@@ -101,7 +101,7 @@ class BiometricEngine:
             color = (0, 0, 255) # Rojo si no reconoce
             confidence = 0.0
 
-            threshold = float(0.40) # Mantenemos threshold de .40 por la distancia Euclidiana
+            threshold = float(0.30) # Reducido de .40 a .30 para evitar confusión entre hermanos o parientes
 
             if match and match["distance"] < threshold:
                 identity = match["metadata"].get("full_name", "Estudiante")

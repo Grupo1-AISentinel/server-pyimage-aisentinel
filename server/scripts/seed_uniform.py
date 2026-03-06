@@ -26,6 +26,7 @@ def populate_uniforms():
 
     try:
 
+        # Extraer y registrar Chumpas
         ClothingEngine.register_clothing_item(
             item_id="uniform_jacket_promo33", 
             item_type="jacket", 
@@ -35,6 +36,22 @@ def populate_uniforms():
         ClothingEngine.register_clothing_item(
             item_id="uniform_jacket_clasic", 
             item_type="jacket", 
+            images_list=images_clasic
+        )
+        
+        # Extraer y registrar Pantalones (Aprovechando que salen en las fotos de clasic)
+        print("Extrayendo Pantalón de las fotos...")
+        ClothingEngine.register_clothing_item(
+            item_id="pantalon_oficial", 
+            item_type="pants", 
+            images_list=images_clasic
+        )
+        
+        # Extraer y registrar Camisas (Aprovechando que salen en las fotos de clasic)
+        print("Extrayendo Camisa de las fotos...")
+        ClothingEngine.register_clothing_item(
+            item_id="camisa_oficial", 
+            item_type="shirt", 
             images_list=images_clasic
         )
     except Exception as e:

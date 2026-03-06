@@ -49,6 +49,8 @@ async def detect_student(file: UploadFile = File(...)):
 
         has_uniform = False
         clothing_details = "Rostro sin cuerpo visible"
+        needs_full_body_view = False
+        clothing_boxes = []
 
         # Buscar en qué cuerpo encaja este rostro
         for cuerpo in cuerpos:
@@ -58,12 +60,24 @@ async def detect_student(file: UploadFile = File(...)):
             if bx1 <= face_x <= bx2 and by1 <= face_y <= by2:
                 # Ya tenemos a la persona validada, revisamos la ropa que lleva usando el modelo especial
                 crop = cuerpo["crop"]
-                has_uniform, clothing_details = ClothingEngine.validate_uniform(crop)
+                # La tupla devuelve: (valido, log, alerta_piernas, cajas_ropa_relativas)
+                has_uniform, clothing_details, needs_full_body_view, r_clothing_boxes = ClothingEngine.validate_uniform(crop)
+                
+                # Convertir coordenadas relativas del crop a coordenadas absolutas de la imagen para el frontend
+                for cb in r_clothing_boxes:
+                    cx1, cy1, cx2, cy2 = cb["box"]
+                    clothing_boxes.append({
+                        "class": cb["class"],
+                        "box": [bx1 + cx1, by1 + cy1, bx1 + cx2, by1 + cy2] # Sumar offset del cuerpo
+                    })
+
                 break # Ya evaluamos la ropa de este alumno, pasamos al siguiente
         
         # Inyectar los resultados de ropa al diccionario del estudiante
         student["has_uniform"] = has_uniform
         student["clothing_details"] = clothing_details
+        student["needs_full_body_view"] = needs_full_body_view
+        student["clothing_boxes"] = clothing_boxes
         resultados_finales.append(student)
 
     return DetectResponse(

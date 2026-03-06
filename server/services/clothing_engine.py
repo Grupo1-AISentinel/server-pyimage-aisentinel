@@ -59,7 +59,9 @@ class ClothingEngine:
         img_tensor = transform(color_rgb).unsqueeze(0).to(DEVICE)
         
         with torch.no_grad():
-            vector = resnet_model(img_tensor).flatten().tolist()
+            tensor = resnet_model(img_tensor).flatten()
+            tensor = torch.nn.functional.normalize(tensor, p=2, dim=0) # Normalizar L2 para que las distancias sean estables
+            vector = tensor.tolist()
         return vector
 
     @staticmethod
@@ -123,9 +125,11 @@ class ClothingEngine:
         """
         results = yolo_clothing_structure_model(person_crop, device=DEVICE, verbose=False)
         
-        detected_clothing_info = {} # Guardaremos {'jacket': recorte_bgr, 'pants': recorte_bgr, ...}
+        detected_clothing_info = {'upper_body': [], 'pants': []}
+        clothing_boxes = [] # Para que el frontend dibuje máscaras
+        has_pants_structure = False # Para la alerta de cuerpo entero
 
-        # Paso 1: Localizar la ropa y adaptar las clases
+        # Paso 1: Localizar la ropa y adaptar las clases (Agrupamos las de arriba para evitar errores de YOLO)
         for result in results:
             for box in result.boxes:
                 class_id = int(box.cls[0])
@@ -133,62 +137,81 @@ class ClothingEngine:
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 
                 internal_class = None
-                if class_name in ['Coat', 'padded jacket']:
-                    internal_class = 'jacket'
-                elif class_name == 'clothes top':
-                    internal_class = 'shirt'
+                display_name = "ROPA"
+                
+                # Convertimos chumpas y camisas en un solo contenedor "upper_body"
+                if class_name in ['Coat', 'padded jacket', 'clothes top']:
+                    internal_class = 'upper_body'
+                    display_name = 'PRENDA SUPERIOR'
                 elif class_name == 'Pants':
                     internal_class = 'pants'
+                    display_name = 'PANTALON'
                 
-                # Solo guardar si es una prenda de interés para el uniforme (ignorar Skirt, Shoes, etc.)
                 if internal_class:
-                    # Guardamos el recorte exacto de esta prenda
-                    detected_clothing_info[internal_class] = person_crop[y1:y2, x1:x2]
+                    if internal_class == 'pants':
+                        has_pants_structure = True
+                    
+                    # Guardamos toda la informacion de la prenda detectada
+                    detected_clothing_info[internal_class].append({
+                        "crop": person_crop[y1:y2, x1:x2],
+                        "box": [x1, y1, x2, y2],
+                        "display_name": display_name,
+                        "valid": False
+                    })
 
         has_top_valid = False
         has_bottom_valid = False
         details_log = []
 
         # Paso 2 y 3: Validar Prenda Superior (Jacket o Shirt)
-        # 2a: Intentar con Jacket primero
-        if 'jacket' in detected_clothing_info:
-            jac_vector = ClothingEngine._get_embedding(detected_clothing_info['jacket'])
-            match = search_uniform_by_vector(jac_vector)
+        # Evaluamos TODOS los recortes superiores descubiertos por YOLO contra todas las chumpas/camisas en BD
+        for item in detected_clothing_info['upper_body']:
+            vector = ClothingEngine._get_embedding(item["crop"])
+            match = search_uniform_by_vector(vector)
             
-            # Ajustar la tolerancia según pruebas (0.35 para colores/texturas ResNet suele ir bien)
-            if match and match['distance'] < 0.35 and match['metadata'].get('tipo') == 'jacket':
-                has_top_valid = True
-                details_log.append("Chumpa OK")
-            else:
-                details_log.append("Chumpa No-Oficial")
+            # Usar tolerancia matemática de 0.70 para vectores normalizados (flexible con la iluminación de webcam)
+            if match and match['distance'] < 0.70:
+                tipo = match['metadata'].get('tipo')
+                if tipo in ['jacket', 'shirt']:
+                    has_top_valid = True
+                    item["valid"] = True # Marcamos esta caja especifica como valida
+                    details_log.append(f"{tipo.capitalize()} OK")
+                    break # Encontramos una prenda superior válida, detenemos la búsqueda
 
-        # 2b: Si no lleva chumpa válida, revisar si lleva la camisa oficial
-        if not has_top_valid and 'shirt' in detected_clothing_info:
-            shirt_vector = ClothingEngine._get_embedding(detected_clothing_info['shirt'])
-            match = search_uniform_by_vector(shirt_vector)
-            
-            if match and match['distance'] < 0.35 and match['metadata'].get('tipo') == 'shirt':
-                has_top_valid = True
-                details_log.append("Camisa OK")
-            else:
-                details_log.append("Camisa No-Oficial")
+        if not has_top_valid and len(detected_clothing_info['upper_body']) > 0:
+             details_log.append("Prenda Superior No-Oficial")
 
         # Paso 4: Validar Prenda Inferior (Pants) obligatoriamente
-        if 'pants' in detected_clothing_info:
-            pants_vector = ClothingEngine._get_embedding(detected_clothing_info['pants'])
-            match = search_uniform_by_vector(pants_vector)
+        for item in detected_clothing_info['pants']:
+            vector = ClothingEngine._get_embedding(item["crop"])
+            match = search_uniform_by_vector(vector)
             
-            if match and match['distance'] < 0.35 and match['metadata'].get('tipo') == 'pants':
+            if match and match['distance'] < 0.70 and match['metadata'].get('tipo') == 'pants':
                 has_bottom_valid = True
+                item["valid"] = True # Marcamos esta caja especifica como valida
                 details_log.append("Pantalón OK")
-            else:
-                details_log.append("Pantalón No-Oficial")
-        else:
-             details_log.append("Sin Pantalón Visible")
+                break
+                
+        if not has_bottom_valid and len(detected_clothing_info['pants']) > 0:
+            details_log.append("Pantalón No-Oficial")
+        elif len(detected_clothing_info['pants']) == 0:
+            details_log.append("Sin Pantalón Visible")
 
         is_full_uniform_valid = has_top_valid and has_bottom_valid
         
         if not details_log:
             details_log.append("Ropa no detectada por YOLO")
 
-        return is_full_uniform_valid, " | ".join(details_log)
+        # Embutir los resultados finales de cajas para enviarlos al cliente
+        for cat in detected_clothing_info.values():
+            for item in cat:
+                clothing_boxes.append({
+                    "class": item["display_name"],
+                    "box": item["box"],
+                    "valid": item["valid"]
+                })
+
+        # needs_full_body_view será True si YOLO nunca vió piernas en el cuadre
+        needs_full_body_view = not has_pants_structure
+
+        return is_full_uniform_valid, " | ".join(details_log), needs_full_body_view, clothing_boxes
