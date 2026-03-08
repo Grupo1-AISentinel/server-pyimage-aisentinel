@@ -4,6 +4,7 @@ from torchvision.models import resnet18, ResNet18_Weights
 from ultralytics import YOLO
 import cv2
 import numpy as np
+import concurrent.futures
 
 from db.cruds.crud_uniform import save_uniform_vector, search_uniform_by_vector
 
@@ -14,7 +15,7 @@ DEVICE = '0' if torch.cuda.is_available() else 'cpu'
 yolo_person_model = YOLO('yolov8n.pt') 
 
 # 2. Modelo YOLO Estructural (Genérico): Detectar dónde está la ropa
-# Clases del modelo best.pt: 0: 'Coat', 1: 'Pants', 2: 'Shoes', 3: 'Skirt', 4: 'clothes top', 5: 'padded jacket'
+# Clases del modelo best.pt: 0: 'jacket', 1: 'shirt', 2: 'pant', 3: 'accesory'
 yolo_clothing_structure_model = YOLO('best.pt')
 
 # 3. Modelo Vectorial (Identidad/Color de la ropa)
@@ -23,12 +24,21 @@ resnet_model = torch.nn.Sequential(*list(resnet_model.children())[:-1])
 resnet_model.eval()
 resnet_model = resnet_model.to(DEVICE)
 
+# Pipeline de transformación de imagen preconstruido (se crea UNA sola vez al cargar el módulo)
+RESNET_TRANSFORM = transforms.Compose([
+    transforms.ToPILImage(),
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
+
 class ClothingEngine:
 
     @staticmethod
     def extract_all_torsos(frame):
         """Detecta a todas las personas en un frame y extrae su recorte (cuerpo) para análisis posterior."""
-        results = yolo_person_model(frame, classes=[0], device=DEVICE, verbose=False)
+        # imgsz=320: el frame ya llega a 320x240; evita upscale interno a 640
+        results = yolo_person_model(frame, classes=[0], device=DEVICE, verbose=False, imgsz=320)
         personas = []
         for result in results:
             for box in result.boxes:
@@ -49,14 +59,8 @@ class ClothingEngine:
             
         color_rgb = cv2.cvtColor(cropped_image_bgr, cv2.COLOR_BGR2RGB)
         
-        transform = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
-        
-        img_tensor = transform(color_rgb).unsqueeze(0).to(DEVICE)
+        # Usar el pipeline preconstruido (evita recrear Compose en cada llamada)
+        img_tensor = RESNET_TRANSFORM(color_rgb).unsqueeze(0).to(DEVICE)
         
         with torch.no_grad():
             tensor = resnet_model(img_tensor).flatten()
@@ -75,24 +79,28 @@ class ClothingEngine:
         # Mapear item_type interno a las clases que el modelo 'best.pt' entiende
         valid_model_classes = []
         if item_type == 'jacket':
-            valid_model_classes = ['Coat', 'padded jacket']
+            valid_model_classes = ['jacket']
         elif item_type == 'shirt':
-            valid_model_classes = ['clothes top']
+            valid_model_classes = ['shirt']
         elif item_type == 'pants':
-            valid_model_classes = ['Pants']
+            valid_model_classes = ['pant']
+        elif item_type == 'accesory':
+            valid_model_classes = ['accesory']
 
         for image_path in images_list:
             frame = cv2.imread(image_path)
             if frame is None:
                 continue
 
-            results = yolo_clothing_structure_model(frame, device=DEVICE, verbose=False)
+            results = yolo_clothing_structure_model(frame, device=DEVICE, verbose=False, imgsz=320)
             
             clothing_crop = None
+            detected_names = []
             for result in results:
                 for box in result.boxes:
                     class_id = int(box.cls[0])
                     class_name = result.names[class_id]
+                    detected_names.append(class_name)
                     # Validar si el objeto detectado corresponde al tipo que queremos registrar
                     if class_name in valid_model_classes: 
                         x1, y1, x2, y2 = map(int, box.xyxy[0])
@@ -104,9 +112,12 @@ class ClothingEngine:
             if clothing_crop is not None:
                 vector = ClothingEngine._get_embedding(clothing_crop)
                 vectors_buffer.append(vector)
+            else:
+                print(f"[WARN] En {image_path} YOLO detectó: {detected_names} pero no halló {valid_model_classes}")
                 
         if not vectors_buffer:
-            raise ValueError(f"[ERROR] YOLO no detectó un/a '{item_type}' claro en las imágenes para registrarlo.")
+            print(f"[ERROR] YOLO no detectó un/a '{item_type}' claro en las imágenes de {item_id}.")
+            return False
             
         master_vector = np.mean(vectors_buffer, axis=0).tolist()
         metadata = {"tipo": item_type, "valido": True}
@@ -123,7 +134,8 @@ class ClothingEngine:
         3. Pasamos por ResNet para vector.
         4. Validamos el vector contra la DB.
         """
-        results = yolo_clothing_structure_model(person_crop, device=DEVICE, verbose=False)
+        # imgsz=160: los crops de persona son pequeños; reducir a 160 es suficiente para ropa
+        results = yolo_clothing_structure_model(person_crop, device=DEVICE, verbose=False, imgsz=160)
         
         detected_clothing_info = {'upper_body': [], 'pants': []}
         clothing_boxes = [] # Para que el frontend dibuje máscaras
@@ -139,13 +151,14 @@ class ClothingEngine:
                 internal_class = None
                 display_name = "ROPA"
                 
-                # Convertimos chumpas y camisas en un solo contenedor "upper_body"
-                if class_name in ['Coat', 'padded jacket', 'clothes top']:
+                # Mapear clases del nuevo modelo a lógica interna
+                if class_name in ['jacket', 'shirt']:
                     internal_class = 'upper_body'
-                    display_name = 'PRENDA SUPERIOR'
-                elif class_name == 'Pants':
+                    display_name = 'CHUMPA' if class_name == 'jacket' else 'CAMISA'
+                elif class_name == 'pant':
                     internal_class = 'pants'
                     display_name = 'PANTALON'
+                # 'accesory' se ignora en la validación de uniforme
                 
                 if internal_class:
                     if internal_class == 'pants':

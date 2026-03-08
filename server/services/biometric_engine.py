@@ -25,7 +25,8 @@ class BiometricEngine:
     @staticmethod
     def _get_face_locations_yolo(image_rgb):
         """Usa YOLO para encontrar exacto dónde están los rostros y devuelve el array (top, right, bottom, left)"""
-        results = yolo_face_model(image_rgb, device=DEVICE, verbose=False)
+        # imgsz=320: el frame ya llega a 320x240; evita que YOLO haga upscale interno a 640
+        results = yolo_face_model(image_rgb, device=DEVICE, verbose=False, imgsz=320)
         face_locations = []
         for result in results:
             for box in result.boxes:

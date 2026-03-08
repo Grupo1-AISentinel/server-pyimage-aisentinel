@@ -15,3 +15,4 @@ torchvision
 opencv-python
 requests
 huggingface-hub
+socketio

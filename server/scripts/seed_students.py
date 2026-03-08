@@ -8,12 +8,12 @@ def poblar_estudiantes():
     print("Iniciando carga de estudiantes...")
     
     students_to_seed = [
-        {"card": "2024342", "name": "Angel Siliezar", "images": ["img/students/asiliezar/1.jpeg", "img/students/asiliezar/2.jpeg", "img/students/asiliezar/3.jpeg"]},
-        {"card": "2024295", "name": "Isaac Tiguila", "images": ["img/students/itiguila/1.jpeg"]},
+        {"card": "2024342", "name": "Angel Siliezar", "images": ["img/students/asiliezar/1.jpeg", "img/students/asiliezar/2.jpeg", "img/students/asiliezar/3.jpeg","img/students/asiliezar/4.jpeg","img/students/asiliezar/5.jpeg"]},
+        {"card": "2024295", "name": "Isaac Tiguila", "images": ["img/students/itiguila/1.jpeg","img/students/itiguila/2.jpeg","img/students/itiguila/3.jpeg","img/students/itiguila/4.jpeg"]},
         {"card": "2024442", "name": "Jeferson Yaxon", "images": ["img/students/jyaxon/1.jpeg"]},
         {"card": "2024449", "name": "Anderson Sosa", "images": ["img/students/asosa/asosa.jpeg"]},
         {"card": "2024392", "name": "Wilson Florian", "images": ["img/students/wflorian/1.jpeg"]},
-        {"card": "2021211", "name": "Angel Lucero", "images": ["img/students/alucero/1.jpeg"]}
+        {"card": "2021211", "name": "Angel Lucero", "images": ["img/students/alucero/1.jpeg","img/students/alucero/2.jpeg","img/students/alucero/3.jpeg","img/students/alucero/4.jpeg"]}
     ]
 
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
