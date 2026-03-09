@@ -2,6 +2,7 @@ import cv2
 import socketio
 import time
 import threading
+import base64
 
 URL_SERVIDOR = "http://localhost:8000"
 
@@ -107,6 +108,9 @@ def hilo_envio_frames():
 def open_cam():
     global frame_actual
     tiempo_previo_fps = 0
+    url_alerts = "http://localhost:3067/AISentinelAdmin/v1/alerts/automatic-detection"
+    ultimo_envio_alerta = 0 
+    intervalo_alerta = 10
 
     print("Iniciando sensor de cámara en segundo plano...")
     threading.Thread(target=leer_camara_continuamente, daemon=True).start()
@@ -150,12 +154,38 @@ def open_cam():
         )
 
         for det in detecciones_actuales:
+            if det is None: continue
+            top, right, bottom, left = det["location"]
             top, right, bottom, left = det.get("location", [0, 0, 0, 0])
             # Escalar coordenadas por 2 porque se envió como 320x240
             top, right, bottom, left = top*2, right*2, bottom*2, left*2
 
             nombre = det.get("identity", "Desconocido")
             tiene_uniforme = det.get("has_uniform", False)
+            id_card = det.get("student_id")
+            tiempo_actual = time.time()
+            if tiene_uniforme == False and id_card and (tiempo_actual - ultimo_envio_alerta > intervalo_alerta):
+                try:
+                    _, buffer_img = cv2.imencode('.jpg', frame)
+                    img_base64 = base64.b64encode(buffer_img).decode('utf-8')
+
+                    # 🚀 2. Enviar la petición con la imagen incluida
+                    payload = {
+                        "idCard": id_card, 
+                        "has_uniform": False,
+                        "image": img_base64  # Enviamos el string Base64
+                    }
+                    requests.post(
+                        url_alerts, 
+                        json=payload,
+                        timeout=2.0
+                    )
+                    ultimo_envio_alerta = tiempo_actual # Actualizamos el marcador de tiempo
+                    print(f"🚨 Alerta enviada a Node para: {id_card}")
+                except Exception as e:
+                    print(f"❌ Error: {e}")
+            
+            # Formatear el texto
             clothing_boxes = det.get("clothing_boxes", [])
             needs_full_body = det.get("needs_full_body_view", False)
 
