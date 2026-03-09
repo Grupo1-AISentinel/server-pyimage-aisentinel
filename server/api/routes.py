@@ -6,6 +6,14 @@ from api.schemas import StudentRegister, DetectResponse, UniformRegister
 
 from services.biometric_engine import BiometricEngine
 from services.clothing_engine   import ClothingEngine
+from services.clothing_engine import ClothingEngine
+from pydantic import BaseModel
+
+class InspeccionToggle(BaseModel):
+    activar: bool
+
+# Variable de estado único para todos los tótems
+inspeccion_global = True
 
 router = APIRouter()
 engine = BiometricEngine()
@@ -60,6 +68,11 @@ def process_frame_fast_from_bytes(img_bytes: bytes) -> list:
 
 def process_frame_from_bytes(img_bytes: bytes, biometric_engine) -> list:
     nparr = np.frombuffer(img_bytes, np.uint8)
+@router.post("/api/detect", response_model=DetectResponse)
+async def detect_student(file: UploadFile = File(...)):
+    global inspeccion_global
+    contents = await file.read()
+    nparr = np.frombuffer(contents, np.uint8)
     frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     if frame is None:
         return None
@@ -173,3 +186,52 @@ async def detect_student(file: UploadFile = File(...)):
     if not resultados_finales:
         return DetectResponse(status="No hay rostros reconocidos", students=[])
     return DetectResponse(status="Alumnos procesados", students=resultados_finales)
+    # Detectar TODOS los cuerpos en el frame mediante YOLO
+    cuerpos = []
+    if inspeccion_global:
+        cuerpos = ClothingEngine.extract_all_torsos(frame)
+    
+    resultados_finales = []
+
+    # Unir cada Rostro con su respectivo Cuerpo
+    for student in students_detected:
+        top, right, bottom, left = student["location"]
+        # Calcular el centro del rostro (Punto X, Y)
+        face_x = (left + right) // 2
+        face_y = (top + bottom) // 2
+
+        has_uniform = False
+        clothing_details = "Rostro sin cuerpo detectado"
+
+        if inspeccion_global:
+            has_uniform = False
+            clothing_details = "Rostro sin cuerpo detectado"
+            # Buscar en qué cuerpo encaja este rostro
+            for cuerpo in cuerpos:
+                bx1, by1, bx2, by2 = cuerpo["box"]
+                
+                # Si el centro del rostro está dentro del cuadro de este cuerpo entero
+                if bx1 <= face_x <= bx2 and by1 <= face_y <= by2:
+                    # Ya tenemos a la persona validada, revisamos la ropa que lleva usando el modelo especial
+                    crop = cuerpo["crop"]
+                    has_uniform, clothing_details = ClothingEngine.validate_uniform(crop)
+                    break # Ya evaluamos la ropa de este alumno, pasamos al siguiente
+        # Inyectar los resultados de ropa al diccionario del estudiante
+        student["has_uniform"] = has_uniform
+        student["clothing_details"] = clothing_details
+        resultados_finales.append(student)
+
+    return DetectResponse(
+        status="Alumnos procesados",
+        students=resultados_finales
+    )
+@router.post("/inspeccion/toggle")
+async def toggle_inspeccion(datos: InspeccionToggle):
+    global inspeccion_global
+    inspeccion_global = datos.activar
+    estado_str = "ACTIVADA" if inspeccion_global else "DESACTIVADA"
+    return {
+        "status": "success",
+        "message": f"Inspección de uniforme {estado_str} globalmente",
+        "activado": inspeccion_global
+    }
