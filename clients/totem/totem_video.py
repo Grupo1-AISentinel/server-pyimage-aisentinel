@@ -36,11 +36,22 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Resoluciones (se recalculan en open_cam según el video real)
 # ---------------------------------------------------------------------------
-SEND_W, SEND_H = 180, 320   # portrait por defecto
+SEND_W, SEND_H = 180, 320   # canal rápido (detect_boxes): portrait por defecto
 DISPLAY_W      = 480
 DISPLAY_H      = 854
 SCALE_X        = DISPLAY_W / SEND_W
 SCALE_Y        = DISPLAY_H / SEND_H
+
+# Canal lento (detect_frame / identidad + uniforme):
+#   2× resolución del canal rápido → caras ~54px en lugar de ~27px.
+#   dlib (face_recognition) recomienda ≥40px de cara para encoding confiable.
+#   Con mayor resolución, face_recognition extrae mejores embeddings y la
+#   detección de ropa por YOLO también mejora (usa imgsz=640 nativo).
+#   Escala inversa SCALE_SLOW = DISPLAY / SEND_SLOW (más pequeña que SCALE).
+SEND_W_SLOW  = 180 * 2  # se recalcula en open_cam igual que SEND_W
+SEND_H_SLOW  = 320 * 2
+SCALE_X_SLOW = DISPLAY_W / SEND_W_SLOW
+SCALE_Y_SLOW = DISPLAY_H / SEND_H_SLOW
 
 # ---------------------------------------------------------------------------
 # Intervalos
@@ -80,35 +91,40 @@ class FaceTrack:
         with FaceTrack._lock:
             FaceTrack._seq += 1
             self.local_id  = FaceTrack._seq
-        self.server_id     = server_id  # ID de ByteTrack del servidor
-        self.identity_data = None       # Resultado del pipeline completo
-        self.missed        = 0          # Frames consecutivos sin medición
+        self.server_id     = server_id
+        self.identity_data = None
+        self.missed        = 0
         self.age           = 0
+        # Timestamp hasta el cual el uniforme está "congelado" como completo.
+        # Si time.time() < uniform_confirmed_until → no re-enviar frame al servidor.
+        self.uniform_confirmed_until = 0.0
+        self._last_ts      = time.monotonic()   # timestamp del último predict()
 
-        # Kalman filter
-        dt = 1.0 / FPS_RENDER_MAX
+        # Kalman filter 6D: [cx, cy, w, h, vx, vy]
+        # dt es VARIABLE: se actualiza en cada predict() con el tiempo real transcurrido.
+        # dt fijo = 1/30s causaba acumulación de error cuando el render no era exactamente
+        # a 30 FPS (GIL de Python, contención de locks) → lag visible en personas rápidas.
         self.kf = cv2.KalmanFilter(6, 4)
 
-        # F: transición (pos += vel * dt)
-        F = np.eye(6, dtype=np.float32)
-        F[0, 4] = dt
-        F[1, 5] = dt
-        self.kf.transitionMatrix = F
-
-        # H: observamos cx, cy, w, h
+        # F se inicializa con dt≈0; se sobreescribe en cada predict() con dt real
+        self.kf.transitionMatrix  = np.eye(6, dtype=np.float32)
         self.kf.measurementMatrix = np.eye(4, 6, dtype=np.float32)
 
-        # Q: ruido de proceso — velocidad con poca incertidumbre → predicción estable
+        # Q: ruido de proceso.
+        # Q_vel=0.10 (reducido desde 0.35): menos "vuelo" cuando la persona
+        # desacelera o para. El Kalman no intenta seguir velocidades ficticias.
+        # Q_pos=1.5: suficiente para absorber pequeñas discrepancias de medición.
         self.kf.processNoiseCov = np.diag(
-            [2.0, 2.0, 1.5, 1.5, 0.05, 0.05]
+            [1.5, 1.5, 0.8, 0.8, 0.10, 0.10]
         ).astype(np.float32)
 
-        # R: ruido de medición — confiamos bastante en YOLO (GPU, alta precisión)
+        # R: ruido de medición.
+        # R=2.0 (reducido desde 4.0): confiamos más en YOLO+ByteTrack GPU.
+        # El filtro "salta" más rápido a la medición real → menos desviación.
         self.kf.measurementNoiseCov = np.diag(
-            [3.0, 3.0, 8.0, 8.0]
+            [2.0, 2.0, 6.0, 6.0]
         ).astype(np.float32)
 
-        # Covarianza inicial alta → acepta corrección rápida en los primeros frames
         self.kf.errorCovPost = np.eye(6, dtype=np.float32) * 50.0
         self.kf.statePost    = np.array(
             [[cx], [cy], [w], [h], [0.0], [0.0]], dtype=np.float32
@@ -116,21 +132,48 @@ class FaceTrack:
 
     def predict(self) -> tuple[int, int, int, int]:
         """
-        Avanza el Kalman un step y devuelve (x1, y1, x2, y2) en display coords.
-        Llamar UNA VEZ por frame de render.
+        Avanza el Kalman con dt REAL desde la última llamada.
+
+        Por qué dt real es importante:
+        - El GIL de Python y la contención en _lock_tracker hacen que el render
+          loop no sea exactamente 30 FPS. Con dt fijo la predicción de posición
+          diverge cuando los frames tardan más/menos de 1/30 s.
+        - Con dt real: si tardó 45 ms desde el último predict, la caja se mueve
+          exactamente vx*0.045 píxeles — sin acumulación de error.
         """
-        p  = self.kf.predict()  # OpenCV: estado (6,1) o (6,) según versión
+        now = time.monotonic()
+        dt  = min(now - self._last_ts, 0.1)  # cap a 100 ms para no saltar si hay pausa
+        self._last_ts = now
+
+        # Actualizar F con dt real antes de predecir
+        self.kf.transitionMatrix[0, 4] = dt
+        self.kf.transitionMatrix[1, 5] = dt
+
+        p    = self.kf.predict()
         flat = np.asarray(p).flat
-        cx = float(flat[0]); cy = float(flat[1])
-        w  = max(float(flat[2]), 20.0)
-        h  = max(float(flat[3]), 20.0)
+        cx   = float(flat[0]); cy = float(flat[1])
+        w    = max(float(flat[2]), 20.0)
+        h    = max(float(flat[3]), 20.0)
         self.missed += 1
         self.age    += 1
-        return (int(cx - w/2), int(cy - h/2), int(cx + w/2), int(cy + h/2))
+        return (int(cx - w / 2), int(cy - h / 2), int(cx + w / 2), int(cy + h / 2))
 
     def correct(self, cx: float, cy: float, w: float, h: float):
-        """Incorpora una nueva medición del servidor (corrige la predicción)."""
+        """
+        Incorpora una nueva medición del servidor y amortigua la velocidad.
+
+        Por qué amortiguar velocidad después de correct():
+        Cuando el servidor envía una posición real (ground truth), la velocidad
+        estimada por el Kalman podría estar desviada (ej: el tracker predijo que
+        la persona iba a seguir moviéndose pero se detuvo). Sin amortiguación,
+        el box "vuela" más allá del punto de corrección. Con 0.6×, la velocidad
+        se reduce parcialmente → el box queda cerca del ground truth del servidor.
+        """
         self.kf.correct(np.array([[cx], [cy], [w], [h]], dtype=np.float32))
+        # Amortiguar velocidad post-corrección para evitar overshooting
+        s = self.kf.statePost
+        s[4, 0] *= 0.6   # vx
+        s[5, 0] *= 0.6   # vy
         self.missed = 0
 
     def center(self) -> tuple[float, float]:
@@ -249,9 +292,11 @@ class FaceTracker:
     def associate_identity(self, results: list[dict]):
         """
         Asigna los resultados del pipeline completo (identidad + uniforme) al
-        track más cercano. Si el track ya tiene identidad para la misma persona,
-        solo la actualiza (no resetea clothing si ya era conocida).
+        track más cercano.
+        Si el uniforme queda completo, congela la verificación 30 segundos:
+        uniform_confirmed_until = now + 30  → hilo_envio_completo omite ese track.
         """
+        now = time.time()
         for res in results:
             loc_d = res.get("location_display")
             if loc_d is None:
@@ -269,6 +314,12 @@ class FaceTracker:
 
             if best_t is not None:
                 best_t.identity_data = res
+                if res.get("has_uniform"):
+                    # Uniforme completo → no re-verificar por 30 s
+                    best_t.uniform_confirmed_until = now + 30.0
+                elif res.get("identity") not in ("Desconocido", "Detectando...", None):
+                    # Uniforme incompleto para persona conocida → resetear lock
+                    best_t.uniform_confirmed_until = 0.0
 
     def clear(self):
         self.tracks.clear()
@@ -329,14 +380,21 @@ def disconnect():
     print("Desconectado de Socket.IO.")
 
 
-def _loc_to_display(loc):
-    """Convierte (top,right,bottom,left) en coords SEND → (x1,y1,x2,y2) en display."""
+def _loc_to_display(loc, sx=None, sy=None):
+    """
+    Convierte (top,right,bottom,left) en coords SEND → (x1,y1,x2,y2) en display.
+    sx/sy opcionales: escala del canal que generó la detección.
+      - Sin parámetros:  canal rápido (SCALE_X, SCALE_Y)
+      - sx=SCALE_X_SLOW: canal lento (frame 2× más grande → escala 2× más pequeña)
+    """
     top, right, bottom, left = loc
+    _sx = sx if sx is not None else SCALE_X
+    _sy = sy if sy is not None else SCALE_Y
     return (
-        int(left   * SCALE_X),
-        int(top    * SCALE_Y),
-        int(right  * SCALE_X),
-        int(bottom * SCALE_Y),
+        int(left   * _sx),
+        int(top    * _sy),
+        int(right  * _sx),
+        int(bottom * _sy),
     )
 
 
@@ -369,15 +427,15 @@ def handle_boxes_result(datos):
 def handle_detect_results(datos):
     """
     Respuesta del pipeline completo (identidad + uniforme).
-    Pre-escala todas las coordenadas a display y las asocia a los tracks activos.
+    Pre-escala con SCALE_SLOW (canal lento = 2× resolución que el canal rápido).
     """
     nuevas = datos if isinstance(datos, list) else datos.get("students", [])
     enriched = []
     for res in nuevas:
         loc   = res.get("location", [0, 0, 0, 0])
-        loc_d = _loc_to_display(loc)
+        loc_d = _loc_to_display(loc, sx=SCALE_X_SLOW, sy=SCALE_Y_SLOW)
 
-        # Escalar clothing boxes a display coords
+        # Clothing boxes también vienen en coordenadas del canal lento (2×)
         c_boxes_d = []
         for cb in res.get("clothing_boxes", []):
             bx1, by1, bx2, by2 = cb["box"]
@@ -385,8 +443,8 @@ def handle_detect_results(datos):
                 "class": cb["class"],
                 "valid": cb.get("valid", False),
                 "box_display": [
-                    int(bx1 * SCALE_X), int(by1 * SCALE_Y),
-                    int(bx2 * SCALE_X), int(by2 * SCALE_Y),
+                    int(bx1 * SCALE_X_SLOW), int(by1 * SCALE_Y_SLOW),
+                    int(bx2 * SCALE_X_SLOW), int(by2 * SCALE_Y_SLOW),
                 ],
             })
 
@@ -471,17 +529,35 @@ def hilo_envio_rapido():
 # ---------------------------------------------------------------------------
 def hilo_envio_completo():
     """
-    Envía frames para el pipeline completo cada INTERVALO_COMPLETO_SEG.
-    Solo envía si hay tracks activos (hay personas en cámara).
+    Envía frames para el pipeline completo (identidad + uniforme) en 2× resolución.
+
+    Canal lento usa SEND_W_SLOW × SEND_H_SLOW (el doble del canal rápido) y
+    calidad JPEG 92% para maximizar la información facial disponible para dlib.
+
+    Optimización de uniforme completo (30 s):
+      Si todos los tracks activos ya tienen uniforme confirmado (has_uniform=True) y
+      el bloqueo temporal aún no expiró, NO se envía el frame → el servidor no procesa
+      YOLO+ResNet+ChromaDB para esa persona innecesariamente.
+      El recuadro sigue verde en el cliente gracias al identity_data cacheado.
     """
     while True:
         with _lock_tracker:
             hay_tracks = len(face_tracker.tracks) > 0
+            now = time.time()
+            # ¿Hay algún track activo que necesite verificación?
+            hay_pendientes = any(
+                t.identity_data is None
+                or t.identity_data.get("identity") in ("Detectando...", None)
+                or now > t.uniform_confirmed_until
+                for t in face_tracker.tracks
+                if t.missed <= FaceTracker.MAX_MISSED
+            )
 
-        if sio.connected and frame_actual is not None and hay_tracks:
+        if sio.connected and frame_actual is not None and hay_tracks and hay_pendientes:
             try:
-                resized = cv2.resize(frame_actual, (SEND_W, SEND_H))
-                _, buf  = cv2.imencode(".jpg", resized, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                resized = cv2.resize(frame_actual, (SEND_W_SLOW, SEND_H_SLOW))
+                _, buf  = cv2.imencode(".jpg", resized,
+                                       [int(cv2.IMWRITE_JPEG_QUALITY), 92])
                 sio.emit("detect_frame", {"image": buf.tobytes()})
             except Exception as e:
                 print(f"Error emit completo: {e}")
@@ -493,6 +569,7 @@ def hilo_envio_completo():
 # ---------------------------------------------------------------------------
 def open_cam():
     global frame_actual, DISPLAY_W, DISPLAY_H, SCALE_X, SCALE_Y, SEND_W, SEND_H
+    global SEND_W_SLOW, SEND_H_SLOW, SCALE_X_SLOW, SCALE_Y_SLOW
     global _fps_contador, _fps_ts, _fps_actual
 
     ruta_video = "./assets/3.MOV"
@@ -520,9 +597,17 @@ def open_cam():
 
     SCALE_X = DISPLAY_W / SEND_W
     SCALE_Y = DISPLAY_H / SEND_H
+
+    # Canal lento: 2× resolución para mejor face encoding (dlib necesita ≥40px/cara)
+    SEND_W_SLOW  = SEND_W * 2
+    SEND_H_SLOW  = SEND_H * 2
+    SCALE_X_SLOW = DISPLAY_W / SEND_W_SLOW
+    SCALE_Y_SLOW = DISPLAY_H / SEND_H_SLOW
+
     ok_str  = "✅" if abs(SCALE_X - SCALE_Y) < 0.1 else "⚠️"
     print(f"[Ventana] {native_w}x{native_h} → {DISPLAY_W}x{DISPLAY_H} "
-          f"| SEND {SEND_W}x{SEND_H} | SCALE {SCALE_X:.2f}x{SCALE_Y:.2f} {ok_str}")
+          f"| SEND_FAST {SEND_W}x{SEND_H} | SEND_SLOW {SEND_W_SLOW}x{SEND_H_SLOW} "
+          f"| SCALE {SCALE_X:.2f} {ok_str}")
 
     cv2.namedWindow(NOMBRE_VENTANA, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(NOMBRE_VENTANA, DISPLAY_W, DISPLAY_H)
@@ -562,8 +647,6 @@ def open_cam():
         with _lock_tracker:
             tracked = face_tracker.predict_all()
 
-        necesita_cuerpo = False
-
         for box_pred, track in tracked:
             # ── Clamping a los bordes del frame ──────────────────────────
             x1 = max(0, min(box_pred[0], DISPLAY_W - 1))
@@ -577,12 +660,9 @@ def open_cam():
             nombre         = "Detectando..."
             tiene_uniforme = None
             clothing_items = []
-            needs_body     = False
-
             if det:
                 nombre         = det.get("identity", "Desconocido")
                 tiene_uniforme = det.get("has_uniform")
-                needs_body     = det.get("needs_full_body_view", False)
 
                 # Delta de posición: mueve clothing boxes con el track actual.
                 # Cuando el servidor detectó la ropa, la cara estaba en loc_d;
@@ -626,19 +706,16 @@ def open_cam():
             # Cajas de ropa (con delta aplicado)
             for cb in clothing_items:
                 bx1, by1, bx2, by2 = cb["box"]
-                c_color = (0, 200, 0) if cb["valid"] else (0, 0, 200)
+                if cb["class"].upper() == "ACCESORIO":
+                    c_color = (0, 0, 255)   # accesorios siempre en rojo
+                elif cb["valid"]:
+                    c_color = (0, 200, 0)   # prenda válida → verde
+                else:
+                    c_color = (0, 100, 255) # prenda inválida → naranja
                 cv2.rectangle(frame, (bx1, by1), (bx2, by2), c_color, 2)
                 cv2.putText(frame, cb["class"].upper(),
                             (bx1, max(by1 - 5, 10)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, c_color, 2)
-
-            if needs_body:
-                necesita_cuerpo = True
-
-        if necesita_cuerpo:
-            cv2.putText(frame, "ACERQUESE/ALEJESE PARA VER PANTALON",
-                        (50, DISPLAY_H - 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
         cv2.imshow(NOMBRE_VENTANA, frame)
         if cv2.waitKey(_ms_por_frame) & 0xFF == ord("q"):
