@@ -1,35 +1,88 @@
+"""
+seed_students.py — Registro automático de estudiantes en ChromaDB.
+
+Auto-descubre TODAS las imágenes en img/students/<directorio>/ sin necesidad
+de listar manualmente cada archivo. Añadir una foto nueva al directorio
+y volver a ejecutar el seeder actualiza el registro automáticamente.
+
+Mapa directorio → (carnet, nombre):
+  Si se agrega un nuevo estudiante, agregar su entrada en STUDENTS_MAP.
+"""
 import os
 import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.biometric_engine import BiometricEngine
 
-def poblar_estudiantes():
-    print("Iniciando carga de estudiantes...")
-    
-    students_to_seed = [
-        {"card": "2024342", "name": "Angel Siliezar", "images": ["img/students/asiliezar/1.jpeg", "img/students/asiliezar/2.jpeg", "img/students/asiliezar/3.jpeg","img/students/asiliezar/4.jpeg","img/students/asiliezar/5.jpeg"]},
-        {"card": "2024295", "name": "Isaac Tiguila", "images": ["img/students/itiguila/1.jpeg","img/students/itiguila/2.jpeg","img/students/itiguila/3.jpeg","img/students/itiguila/4.jpeg"]},
-        {"card": "2024442", "name": "Jeferson Yaxon", "images": ["img/students/jyaxon/1.jpeg"]},
-        {"card": "2024449", "name": "Anderson Sosa", "images": ["img/students/asosa/asosa.jpeg"]},
-        {"card": "2024392", "name": "Wilson Florian", "images": ["img/students/wflorian/1.jpeg"]},
-        {"card": "2021211", "name": "Angel Lucero", "images": ["img/students/alucero/1.jpeg","img/students/alucero/2.jpeg","img/students/alucero/3.jpeg","img/students/alucero/4.jpeg"]}
-    ]
+# Extensiones de imagen soportadas
+VALID_EXT = {'.jpg', '.jpeg', '.png', '.webp', '.bmp'}
 
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    engine = BiometricEngine()
+# Mapa: nombre_directorio → (carnet, nombre_completo)
+STUDENTS_MAP = {
+    "asiliezar": ("2024342", "Angel Siliezar"),
+    "itiguila":  ("2024295", "Isaac Tiguila"),
+    "jyaxon":    ("2024442", "Jeferson Yaxon"),
+    "asosa":     ("2024449", "Anderson Sosa"),
+    "wflorian":  ("2024392", "Wilson Florian"),
+    "alucero":   ("2021211", "Angel Lucero"),
+}
 
-    for student in students_to_seed:
-        # Convertir rutas relativas a rutas absolutas
-        rutas_absolutas = [os.path.join(base_dir, img) for img in student["images"]]
-        
+
+def get_images_in_dir(dir_path: str) -> list[str]:
+    """Retorna todas las imágenes válidas de un directorio, ordenadas."""
+    return sorted([
+        os.path.join(dir_path, f)
+        for f in os.listdir(dir_path)
+        if os.path.splitext(f.lower())[1] in VALID_EXT
+    ])
+
+
+def populate_students():
+    base_dir    = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    students_dir = os.path.join(base_dir, "img", "students")
+    engine      = BiometricEngine()
+
+    print("=" * 60)
+    print("  SEED ESTUDIANTES — Auto-discovery de imágenes")
+    print("=" * 60)
+
+    # Descubrir automáticamente todos los subdirectorios
+    try:
+        all_dirs = sorted([
+            d for d in os.listdir(students_dir)
+            if os.path.isdir(os.path.join(students_dir, d))
+        ])
+    except FileNotFoundError:
+        print(f"[ERROR] Directorio no encontrado: {students_dir}")
+        return
+
+    found_count = 0
+    for dir_name in all_dirs:
+        if dir_name not in STUDENTS_MAP:
+            print(f"\n[WARN] Directorio '{dir_name}' sin mapeo en STUDENTS_MAP — omitido.")
+            print(f"       Agregar: \"{dir_name}\": (\"CARNET\", \"Nombre Completo\")")
+            continue
+
+        carnet, nombre = STUDENTS_MAP[dir_name]
+        img_dir = os.path.join(students_dir, dir_name)
+        images  = get_images_in_dir(img_dir)
+
+        print(f"\n--- {nombre} ({carnet}) | {len(images)} imágenes en '{dir_name}/' ---")
+
+        if not images:
+            print(f"  [WARN] Sin imágenes en {img_dir}")
+            continue
+
         try:
-            # Hacer el promedio
-            engine.register_face(student["card"], student["name"], rutas_absolutas)
+            engine.register_face(carnet, nombre, images)
+            found_count += 1
         except Exception as e:
-            print(f"Error con {student['name']}: {e}")
+            print(f"  [ERROR] {nombre}: {e}")
 
-    print("EXITO: Carga de estudiantes completada.")
+    print("\n" + "=" * 60)
+    print(f"  COMPLETADO: {found_count}/{len(all_dirs)} estudiantes registrados.")
+    print("=" * 60)
+
 
 if __name__ == "__main__":
-    poblar_estudiantes()
+    populate_students()

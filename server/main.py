@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import os
 import logging
+import traceback
 import base64
 import io
 import time
@@ -98,7 +99,7 @@ async def detect_frame(sid, data):
                 if resultados_finales is not None:
                     await sio_server.emit('detect_results', resultados_finales, to=sid)
         except Exception as e:
-            logger.error(f"Error procesando frame de camara vía Socket.IO: {e}")
+            logger.error(f"Error procesando frame de camara vía Socket.IO: {e}\n{traceback.format_exc()}")
 
 # Configuración estricta de CORS
 app.add_middleware(
@@ -190,6 +191,18 @@ app.include_router(api_router)
 @app.on_event("startup")
 async def startup_event():
     logger.info("🟢 Servidor AI Sentinel Iniciado...")
+
+    import torch
+    if torch.cuda.is_available():
+        gpu_name  = torch.cuda.get_device_name(0)
+        vram_gb   = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
+        vram_free = torch.cuda.mem_get_info(0)[0] / 1024 ** 3
+        logger.info(f"[CUDA] ✅ GPU NVIDIA disponible: {gpu_name}")
+        logger.info(f"[CUDA] VRAM total: {vram_gb:.1f} GB | VRAM libre: {vram_free:.1f} GB")
+        logger.info(f"[CUDA] Todos los modelos (YOLO-Face, YOLO-Person, YOLO-Clothing, ResNet) usarán GPU")
+    else:
+        logger.warning("[CUDA] ⚠️  Sin GPU CUDA — el servidor usará CPU para toda inferencia (rendimiento reducido)")
+
     thread = Thread(target=start_socket, daemon=True)
     thread.start()
 

@@ -8,11 +8,9 @@ python-socketio[client]==5.11.1
 numpy<2.0.0
 python-multipart
 ultralytics>=8.3.0
-torch
-torchvision
+# torch y torchvision se instalan en el Dockerfile con soporte CUDA específico
 # versión sin grafica
 # opencv-python-headless
 opencv-python
 requests
 huggingface-hub
-socketio
