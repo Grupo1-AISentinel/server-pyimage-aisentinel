@@ -13,4 +13,13 @@ services:
       - ./server/chroma_data:/app/chroma_data
     env_file:
       - .env
+    environment:
+      - ANONYMIZED_TELEMETRY=False
     restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
