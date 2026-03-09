@@ -22,7 +22,9 @@ class DetectedStudent(BaseModel):
     color: Any
     confidence: str
     has_uniform: bool = False
-    clothing_details: str = "Sin evaluar" 
+    clothing_details: str = "Sin evaluar"
+    needs_full_body_view: bool = False
+    clothing_boxes: list = [] 
 
 
 class DetectResponse(BaseModel):
