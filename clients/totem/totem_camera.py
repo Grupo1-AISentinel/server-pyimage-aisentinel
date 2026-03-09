@@ -30,13 +30,14 @@ def enviar_frame_servidor(frame_bytes):
 
 
 def open_cam():
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(0)  # Cambia a 0 para webcam real
     ultimo_envio = time.time()
     tiempo_previo_fps = 0
 
     while True:
         ret, frame_original = cap.read()
         if not ret:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             continue
 
         frame = cv2.resize(frame_original, (640, 480))
