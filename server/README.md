@@ -22,21 +22,39 @@ Este componente es el **Cerebro** del sistema. Recibe imágenes, localiza estudi
 
 El sistema utiliza 3 modelos en conjunto para lograr **Cero Falsos Positivos**:
 
-1. **`yolov8n.pt` (El Localizador de Personas):**
-   Este modelo general de YOLO se descarga automáticamente al iniciar el servidor. Su única función es detectar **la silueta de las personas** (los cuerpos enteros). Esto permite que el sistema analice a los estudiantes como "Individuos Completos" y cruce la información del rostro con la ropa correcta.
-2. **`AdamCodd/YOLOv11n-face-detection` (Reconocimiento Facial):**
-   Modelo _State-of-the-Art_ alojado en Hugging Face. Detecta los rostros incluso bajo condiciones difíciles (de lado, borrosos o lejanos) y envía las coordenadas a nuestro motor biométrico, eliminando la detección errónea de rostros en paredes o fondos. (Se descarga automáticamente vía internet).
+1. **`yolo26n.pt` (El Localizador de Personas):**
+   Modelo nano de Ultralytics YOLO26 para detectar **la silueta de las personas** (los cuerpos enteros). Optimizado para recursos limitados (ej. GTX 1050 Ti). Busca en `server/` y, si no existe, descarga automáticamente vía Ultralytics.
+2. **`AdamCodd/YOLOv11n-face-detection` (Detección de Rostros):**
+   YOLO especializado en caras, alojado en Hugging Face. Detecta las ubicaciones (bounding boxes) de rostros. Luego `face_recognition` (dlib) extrae embeddings 128D de esas regiones y ChromaDB compara con los registrados. Pipeline: **YOLO detecta dónde** → **dlib identifica quién**.
 3. **`best.pt` (El Localizador de Ropa Custom):**
-   Es tu modelo personalizado (ubicado en `server/best.pt`). YOLO detecta qué prendas (Coat, clothes top, Pants) lleva el alumno usando las cajas. Si detecta la ropa necesaria, el "Clothing Engine" tomará un recorte exacto de la chumpa y comparará su código de colores/diseño (Vector) con los uniformes oficiales guardados en ChromaDB, dando el veredicto final.
+   Es tu modelo personalizado (ubicado canónicamente en `server/best.pt`) reentrenado sobre YOLO26s. YOLO detecta qué prendas lleva el alumno usando clases estructurales como `jacket_open`, `jacket_close`, `shirt`, `pant` y `accesory`. El `Clothing Engine` valida luego la oficialidad de la prenda con embeddings y referencias de color almacenadas en ChromaDB.
+
+## 🧥 Reglas de Uniforme
+
+- `jacket_close` válida: no exige camisa oficial.
+- `jacket_open` válida: sí exige camisa oficial.
+- `shirt` válida sin chumpa: se considera parte superior válida.
+- `pants` válido: siempre obligatorio.
+- `accesory` detectado: invalida el uniforme.
+
+La detección estructural distingue `jacket_open` y `jacket_close`, pero el catálogo vectorial sigue usando una sola familia lógica `jacket` para comparar oficialidad.
 
 ## 📦 Herramientas Administrativas
 
 Para poblar la base de datos con caras y ropa (Semillas):
 
 ```powershell
-# Ejecutar estos scripts pobladores una vez levantado el servidor
-python scripts/seed_students.py
-python scripts/seed_uniform.py
+# Opción 1: Ejecutar todo de una vez (recomendado)
+python scripts/seed_all.py
+
+# Opción 2: Ejecutar por separado (orden importante)
+python scripts/seed_students.py   # Pobla caras
+python scripts/seed_uniform.py    # Resetea uniformes (según RESET_UNIFORM_COLLECTION) y pobla catálogo
 ```
 
-_(Asegúrate de ejecutar esto desde esta carpeta o la carpeta raíz ajustando las rutas)._
+**Limpieza de uniformes:** Por defecto `seed_uniform` resetea la colección de uniformes para evitar mezclar embeddings antiguos con los nuevos.
+- Para conservar la colección de uniformes existente: `RESET_UNIFORM_COLLECTION=false python scripts/seed_uniform.py`
+
+**Modelos externos:** Los modelos YOLO (face, persona, ResNet) se descargan automáticamente la primera vez. `YOLO_CONFIG_DIR=/tmp/Ultralytics` evita el warning si el directorio por defecto no es escribible.
+
+_(Ejecutar desde la carpeta `server/` o ajustar rutas si corres desde la raíz del proyecto)._
