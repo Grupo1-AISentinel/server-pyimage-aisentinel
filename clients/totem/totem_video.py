@@ -204,8 +204,8 @@ class FaceTracker:
     Flujo al llegar resultados del pipeline completo (slow channel):
       - associate_identity() → asigna identity_data al track más cercano.
     """
-    MAX_MISSED = 12   # frames sin medición → eliminar track (~400 ms a 30 FPS)
-    MAX_DIST   = 90   # px en display para asociar detección → track existente
+    MAX_MISSED = 30   # frames sin medición → eliminar track (1 segundo a 30 FPS, antes 12)
+    MAX_DIST   = 150  # px en display para asociar detección → track existente (rápido, antes 90)
 
     def __init__(self):
         self.tracks: list[FaceTrack] = []
@@ -482,7 +482,7 @@ def conectar_sio_background():
 def leer_camara_continuamente():
     """Lee frames del video y los almacena pre-resizeados a DISPLAY_W x DISPLAY_H."""
     global frame_actual
-    ruta_video  = "./assets/5.MOV"
+    ruta_video  = "./assets/6.MOV"
     cap         = cv2.VideoCapture(ruta_video)
     fps_video   = cap.get(cv2.CAP_PROP_FPS) or 30
     intervalo   = 1.0 / fps_video
@@ -529,6 +529,8 @@ def hilo_envio_rapido():
 # ---------------------------------------------------------------------------
 # Hilo emisor: pipeline completo (identidad + uniforme)
 # ---------------------------------------------------------------------------
+_ultimo_envio_completo = 0.0
+
 def hilo_envio_completo():
     """
     Envía frames para el pipeline completo (identidad + uniforme) en 2× resolución.
@@ -542,10 +544,19 @@ def hilo_envio_completo():
       YOLO+ResNet+ChromaDB para esa persona innecesariamente.
       El recuadro sigue verde en el cliente gracias al identity_data cacheado.
     """
+    global _ultimo_envio_completo
     while True:
         with _lock_tracker:
             hay_tracks = len(face_tracker.tracks) > 0
             now = time.time()
+            
+            # ¿Hay rostros que acaban de entrar y no tienen NINGÚN dato?
+            hay_urgentes = any(
+                t.identity_data is None
+                for t in face_tracker.tracks
+                if t.missed <= FaceTracker.MAX_MISSED
+            )
+            
             # ¿Hay algún track activo que necesite verificación?
             hay_pendientes = any(
                 t.identity_data is None
@@ -555,15 +566,23 @@ def hilo_envio_completo():
                 if t.missed <= FaceTracker.MAX_MISSED
             )
 
+        # Si hay personas nuevas, reducir el intervalo a 0.2s para que se procesen rápido.
+        # De lo contrario, usar el intervalo normal (1.5s).
+        intervalo_actual = 0.2 if hay_urgentes else INTERVALO_COMPLETO_SEG
+
         if sio.connected and frame_actual is not None and hay_tracks and hay_pendientes:
-            try:
-                resized = cv2.resize(frame_actual, (SEND_W_SLOW, SEND_H_SLOW))
-                _, buf  = cv2.imencode(".jpg", resized,
-                                       [int(cv2.IMWRITE_JPEG_QUALITY), 92])
-                sio.emit("detect_frame", {"image": buf.tobytes()})
-            except Exception as e:
-                print(f"Error emit completo: {e}")
-        time.sleep(INTERVALO_COMPLETO_SEG)
+            if now - _ultimo_envio_completo >= intervalo_actual:
+                _ultimo_envio_completo = now
+                try:
+                    resized = cv2.resize(frame_actual, (SEND_W_SLOW, SEND_H_SLOW))
+                    _, buf  = cv2.imencode(".jpg", resized,
+                                           [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+                    sio.emit("detect_frame", {"image": buf.tobytes()})
+                except Exception as e:
+                    print(f"Error emit completo: {e}")
+        
+        # Sleep muy corto para no bloquear y reaccionar instantáneamente
+        time.sleep(0.05)
 
 
 # ---------------------------------------------------------------------------
@@ -574,7 +593,7 @@ def open_cam():
     global SEND_W_SLOW, SEND_H_SLOW, SCALE_X_SLOW, SCALE_Y_SLOW
     global _fps_contador, _fps_ts, _fps_actual
 
-    ruta_video = "./assets/5.MOV"
+    ruta_video = "./assets/6.MOV"
 
     if not os.path.exists(ruta_video):
         print(f"\n[ERROR CRÍTICO] El archivo de video '{ruta_video}' no fue encontrado.")
