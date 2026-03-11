@@ -6,6 +6,10 @@ import numpy as np
 import os
 import sys
 
+# Agregar ruta para que ui_utils.py pueda ser importado
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from ui_utils import draw_futuristic_box
+
 URL_SERVIDOR   = "http://localhost:8000"
 NOMBRE_VENTANA = "AI Sentinel - En vivo"
 
@@ -482,7 +486,7 @@ def conectar_sio_background():
 def leer_camara_continuamente():
     """Lee frames del video y los almacena pre-resizeados a DISPLAY_W x DISPLAY_H."""
     global frame_actual
-    ruta_video  = "./assets/6.MOV"
+    ruta_video  = "./assets/3.MOV"
     cap         = cv2.VideoCapture(ruta_video)
     fps_video   = cap.get(cv2.CAP_PROP_FPS) or 30
     intervalo   = 1.0 / fps_video
@@ -593,7 +597,7 @@ def open_cam():
     global SEND_W_SLOW, SEND_H_SLOW, SCALE_X_SLOW, SCALE_Y_SLOW
     global _fps_contador, _fps_ts, _fps_actual
 
-    ruta_video = "./assets/6.MOV"
+    ruta_video = "./assets/3.MOV"
 
     if not os.path.exists(ruta_video):
         print(f"\n[ERROR CRÍTICO] El archivo de video '{ruta_video}' no fue encontrado.")
@@ -720,16 +724,13 @@ def open_cam():
             else:
                 color_rec = (0, 165, 255)      # naranja
 
-            # Recuadro de cara
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color_rec, 2)
-
+            # Recuadro de cara futurista
             sufijo = ("" if tiene_uniforme is None
                       else (" | UNIFORME: SI" if tiene_uniforme else " | UNIFORME: NO"))
-            cv2.putText(frame, f"{nombre}{sufijo}",
-                        (x1, max(y1 - 10, 15)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_rec, 2)
+            etiqueta = f"{nombre}{sufijo}"
+            draw_futuristic_box(frame, x1, y1, x2, y2, color_rec, text=etiqueta, text_size=0.6)
 
-            # Cajas de ropa (con delta aplicado)
+            # Cajas de ropa futuristas
             for cb in clothing_items:
                 bx1, by1, bx2, by2 = cb["box"]
                 if cb["class"].upper() == "ACCESORIO":
@@ -738,10 +739,9 @@ def open_cam():
                     c_color = (0, 200, 0)   # prenda válida → verde
                 else:
                     c_color = (0, 100, 255) # prenda inválida → naranja
-                cv2.rectangle(frame, (bx1, by1), (bx2, by2), c_color, 2)
-                cv2.putText(frame, cb["class"].upper(),
-                            (bx1, max(by1 - 5, 10)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, c_color, 2)
+                
+                # Borde más delgado y elegante para cajas de ropa interna
+                draw_futuristic_box(frame, bx1, by1, bx2, by2, c_color, text=cb["class"].upper(), text_size=0.5)
 
         cv2.imshow(NOMBRE_VENTANA, frame)
         if cv2.waitKey(_ms_por_frame) & 0xFF == ord("q"):
