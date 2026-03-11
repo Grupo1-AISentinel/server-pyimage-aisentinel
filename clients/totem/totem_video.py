@@ -3,6 +3,8 @@ import socketio
 import time
 import threading
 import numpy as np
+import os
+import sys
 
 URL_SERVIDOR   = "http://localhost:8000"
 NOMBRE_VENTANA = "AI Sentinel - En vivo"
@@ -480,7 +482,7 @@ def conectar_sio_background():
 def leer_camara_continuamente():
     """Lee frames del video y los almacena pre-resizeados a DISPLAY_W x DISPLAY_H."""
     global frame_actual
-    ruta_video  = "./assets/3.MOV"
+    ruta_video  = "./assets/5.MOV"
     cap         = cv2.VideoCapture(ruta_video)
     fps_video   = cap.get(cv2.CAP_PROP_FPS) or 30
     intervalo   = 1.0 / fps_video
@@ -572,7 +574,12 @@ def open_cam():
     global SEND_W_SLOW, SEND_H_SLOW, SCALE_X_SLOW, SCALE_Y_SLOW
     global _fps_contador, _fps_ts, _fps_actual
 
-    ruta_video = "./assets/3.MOV"
+    ruta_video = "./assets/5.MOV"
+
+    if not os.path.exists(ruta_video):
+        print(f"\n[ERROR CRÍTICO] El archivo de video '{ruta_video}' no fue encontrado.")
+        print("-> Asegurate de que exista o utiliza 'totem_camera.py' para usar la webcam viva.\n")
+        sys.exit(1)
 
     # Resolución nativa del video
     probe    = cv2.VideoCapture(ruta_video)
