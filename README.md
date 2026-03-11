@@ -1,6 +1,6 @@
 # AI Sentinel - Arquitectura General
 
-Sistema de visión computacional dividido en una arquitectura Cliente-Servidor para el control de asistencia y seguridad escolar con validación estricta de uniformes mediante Inteligencia Artificial (YOLO11 + ResNet18).
+Sistema de visión computacional dividido en una arquitectura Cliente-Servidor para el control de asistencia y seguridad escolar con validación estricta de uniformes mediante Inteligencia Artificial (YOLO26s + YOLO11 Face + ResNet18).
 
 ## 🏗️ Estructura del Proyecto
 
@@ -47,6 +47,7 @@ python totem_camera.py
 Hemos alcanzado **Cero Falsos Positivos** usando una arquitectura híbrida:
 
 - **Detección Estructural (YOLO):** Ubica _dónde_ está la ropa de interés (Ej. Chumpas, pantalones).
+- **Reglas de Uniforme:** `jacket_close` permite ausencia de camisa, mientras `jacket_open` exige camisa oficial.
 - **Validación de Identidad (ResNet18):** Recorta la prenda usando el cuadro que dio YOLO y usa ResNet para confirmar si el diseño/color coincide con los uniformes de la Base de Datos.
 
 **Para mantener el sistema dinámico:**

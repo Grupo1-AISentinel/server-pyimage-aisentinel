@@ -31,6 +31,16 @@ BÚSQUEDA TIPADA (crud_uniform.py):
 ESTADOS DE JACKET:
   - close: chumpa cerrada → la camisa NO es obligatoria en validación
   - open:  chumpa abierta → la camisa SÍ es obligatoria en validación
+
+CLASES ESTRUCTURALES DEL DETECTOR:
+  - jacket_open / jacket_close se mapean al tipo lógico "jacket"
+  - shirt se mapea a "shirt"
+  - pant/pants se mapea a "pants"
+
+LIMPIEZA AL EJECUTAR:
+  Por defecto se resetea la colección de uniformes para evitar mezcla de embeddings.
+  Ejecutar primero seed_students y luego seed_uniform para una población limpia.
+  Para conservar la colección existente, definir RESET_UNIFORM_COLLECTION=false.
 """
 import os
 import sys
@@ -58,17 +68,14 @@ def get_images(dir_path: str) -> list[str]:
     ])
 
 
-def extract_vectors_from_images(images: list[str], priority_class: str) -> tuple:
+def extract_vectors_from_images(images: list[str], priority_class: str) -> dict:
     """
-    Procesa cada imagen con YOLO y acumula vectores 512D + histogramas HS.
+    Procesa cada imagen con YOLO y acumula embeddings de DINOv2.
 
     Retorna:
-        (vector_pools, color_pools)
-        vector_pools: {"jacket": [v0, ...], "shirt": [...], "pant": [...]}
-        color_pools:  {"jacket": [hist0, ...], "shirt": [...], "pant": [...]}
+        pools: {"jacket": [v0, ...], "shirt": [...], "pants": [...]}
     """
-    pools: dict[str, list] = {"jacket": [], "shirt": [], "pant": []}
-    color_pools: dict[str, list] = {"jacket": [], "shirt": [], "pant": []}
+    pools: dict[str, list] = {"jacket": [], "shirt": [], "pants": []}
     priority_found = 0
 
     for img_path in images:
@@ -88,15 +95,12 @@ def extract_vectors_from_images(images: list[str], priority_class: str) -> tuple
                     pools[yolo_class].append(vector)
                     if yolo_class == priority_class:
                         priority_found += 1
-                hs_hist = ClothingEngine._compute_hs_histogram(crop)
-                if hs_hist is not None:
-                    color_pools[yolo_class].append(hs_hist)
 
         detected_summary = {k: len(v) for k, v in detections.items() if v}
         print(f"    {os.path.basename(img_path)}: {detected_summary}")
 
     print(f"  → {priority_found} detecciones de '{priority_class}' (prioritaria) en {len(images)} imágenes")
-    return pools, color_pools
+    return pools
 
 
 def save_pool_individual(item_id_prefix: str, tipo: str, vectors: list,
@@ -118,9 +122,14 @@ def save_pool_individual(item_id_prefix: str, tipo: str, vectors: list,
         return 0
 
     for i, vector in enumerate(vectors):
-        metadata = {"tipo": tipo, "valido": True, "base_id": item_id_prefix}
-        if extra_meta:
-            metadata.update(extra_meta)
+        metadata = ClothingEngine._build_uniform_metadata(
+            {
+                "tipo": tipo,
+                "base_id": item_id_prefix,
+                **(extra_meta or {}),
+            },
+            source="seed_uniform",
+        )
         upsert_uniform_vector(f"{item_id_prefix}_{i}", vector, metadata)
 
     print(f"  ✅ '{item_id_prefix}' ({tipo}) — {len(vectors)} vectores individuales guardados.")
@@ -132,21 +141,22 @@ def populate_uniforms():
     uniforms_dir = os.path.join(base_dir, "img", "uniforms")
 
     print("=" * 65)
-    print("  SEED UNIFORMES — Embeddings augmentados (ResNet+Color 728D)")
+    print("  SEED UNIFORMES — Embeddings de DINOv2 (384D)")
     print("=" * 65)
 
-    from db.connection import client
-    try:
-        client.delete_collection("uniform_catalog")
-        print("[RESET] Colección 'uniform_catalog' eliminada (nueva dimensión 728D).")
-    except Exception:
-        print("[RESET] Colección 'uniform_catalog' no existía, se creará nueva.")
+    from db.connection import UNIFORMS_COLLECTION_NAME, client
+    reset_collection = os.getenv("RESET_UNIFORM_COLLECTION", "true").lower() == "true"
+    
+    if reset_collection:
+        print(f"[INFO] Eliminando colección '{UNIFORMS_COLLECTION_NAME}' para purgar ropas antiguas...")
+        try:
+            client.delete_collection(name=UNIFORMS_COLLECTION_NAME)
+            print("[INFO] Colección eliminada exitosamente. Se creará una nueva limpia.")
+        except Exception:
+            pass
 
     global_shirt_vectors = []
     global_pants_vectors = []
-    global_jacket_colors = []
-    global_shirt_colors  = []
-    global_pants_colors  = []
 
     # --- 1. Procesar marcas de chumpas (subdirectorios con close/ y open/) ---
     try:
@@ -170,7 +180,7 @@ def populate_uniforms():
                 continue
 
             print(f"\n--- {brand.upper()} / {estado.upper()} ({len(images)} imágenes) ---")
-            pools, color_pools = extract_vectors_from_images(images, priority_class="jacket")
+            pools = extract_vectors_from_images(images, priority_class="jacket")
 
             save_pool_individual(
                 f"{brand}_jacket_{estado}",
@@ -180,14 +190,11 @@ def populate_uniforms():
             )
 
             global_shirt_vectors.extend(pools["shirt"])
-            global_pants_vectors.extend(pools["pant"])
-            global_jacket_colors.extend(color_pools["jacket"])
-            global_shirt_colors.extend(color_pools["shirt"])
-            global_pants_colors.extend(color_pools["pant"])
+            global_pants_vectors.extend(pools["pants"])
             if pools["shirt"]:
                 print(f"  + {len(pools['shirt'])} vectores de camisa al pool global.")
-            if pools["pant"]:
-                print(f"  + {len(pools['pant'])} vectores de pantalón al pool global.")
+            if pools["pants"]:
+                print(f"  + {len(pools['pants'])} vectores de pantalón al pool global.")
 
     # --- 2. Procesar camisas dedicadas (tshirt/) ---
     tshirt_dir    = os.path.join(uniforms_dir, "tshirt")
@@ -195,11 +202,9 @@ def populate_uniforms():
 
     if tshirt_images:
         print(f"\n--- TSHIRT ({len(tshirt_images)} imágenes) ---")
-        pools, color_pools = extract_vectors_from_images(tshirt_images, priority_class="shirt")
+        pools = extract_vectors_from_images(tshirt_images, priority_class="shirt")
         global_shirt_vectors.extend(pools["shirt"])
-        global_pants_vectors.extend(pools["pant"])
-        global_shirt_colors.extend(color_pools["shirt"])
-        global_pants_colors.extend(color_pools["pant"])
+        global_pants_vectors.extend(pools["pants"])
         if pools["shirt"]:
             print(f"  + {len(pools['shirt'])} vectores de camisa al pool global.")
     else:
@@ -210,17 +215,10 @@ def populate_uniforms():
     total_shirts = save_pool_individual("camisa_oficial",   "shirt", global_shirt_vectors)
     total_pants  = save_pool_individual("pantalon_oficial", "pants", global_pants_vectors)
 
-    # --- 4. Guardar referencias de color (histogramas HS medianos) ---
-    print("\n--- GUARDANDO REFERENCIAS DE COLOR ---")
-    ClothingEngine.save_color_reference("jacket", global_jacket_colors)
-    ClothingEngine.save_color_reference("shirt",  global_shirt_colors)
-    ClothingEngine.save_color_reference("pants",  global_pants_colors)
-
     print(f"\n  Camisas en BD:   {total_shirts} vectores")
     print(f"  Pantalones en BD: {total_pants} vectores")
-    print(f"  Refs de color:    jacket={len(global_jacket_colors)} shirt={len(global_shirt_colors)} pants={len(global_pants_colors)}")
     print("\n" + "=" * 65)
-    print("  COMPLETADO: uniforme registrado en ChromaDB + refs de color.")
+    print("  COMPLETADO: uniforme registrado en ChromaDB.")
     print("=" * 65)
 
 

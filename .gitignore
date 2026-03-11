@@ -17,3 +17,5 @@ chroma_data/
 .vscode/
 
 test/img
+clients/assets/valid-images
+valid-images/
