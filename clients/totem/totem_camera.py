@@ -3,6 +3,7 @@ import socketio
 import time
 import threading
 import base64
+import requests
 
 URL_SERVIDOR = "http://localhost:8000"
 
@@ -57,7 +58,7 @@ frame_actual = None
 
 def leer_camara_continuamente():
     global frame_actual
-    cap = cv2.VideoCapture(1)
+    cap = cv2.VideoCapture(0)  # Cambia a 0 para webcam real
     # Reducimos hardware y buffer para eliminar el input lag de OpenCV
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -163,29 +164,43 @@ def open_cam():
             nombre = det.get("identity", "Desconocido")
             tiene_uniforme = det.get("has_uniform", False)
             id_card = det.get("student_id")
+            clothing_boxes = det.get("clothing_boxes", [])
+            
+            tiene_accesorio = any(cb.get("class", "").upper() == "ACCESORIO" for cb in clothing_boxes)
+
+            motivo = None
+            if tiene_uniforme is False:
+                motivo = "UNIFORME_INCOMPLETO"
+            elif tiene_accesorio:
+                motivo = "ACCESORIO_NO_PERMITIDO"
+
             tiempo_actual = time.time()
-            if tiene_uniforme == False and id_card and (tiempo_actual - ultimo_envio_alerta > intervalo_alerta):
+            if motivo and id_card and (tiempo_actual - ultimo_envio_alerta > intervalo_alerta):
                 try:
-                    _, buffer_img = cv2.imencode('.jpg', frame)
+                    # Preparar imagen
+                    _, buffer_img = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
                     img_base64 = base64.b64encode(buffer_img).decode('utf-8')
 
-                    # 🚀 2. Enviar la petición con la imagen incluida
                     payload = {
                         "idCard": id_card, 
-                        "has_uniform": False,
-                        "image": img_base64  # Enviamos el string Base64
+                        "has_uniform": tiene_uniforme,
+                        "has_accessory": tiene_accesorio,
+                        "reason": motivo,
+                        "image": img_base64 
                     }
-                    requests.post(
-                        url_alerts, 
-                        json=payload,
-                        timeout=2.0
-                    )
-                    ultimo_envio_alerta = tiempo_actual # Actualizamos el marcador de tiempo
-                    print(f"🚨 Alerta enviada a Node para: {id_card}")
+                    
+                    def post_alerta(p):
+                        try:
+                            requests.post(url_alerts, json=p, timeout=3.0)
+                            print(f" Alerta enviada ({p['reason']}) para: {id_card}")
+                        except Exception as e:
+                            print(f" Error HTTP: {e}")
+
+                    threading.Thread(target=post_alerta, args=(payload,), daemon=True).start()
+                    ultimo_envio_alerta = tiempo_actual 
+
                 except Exception as e:
-                    print(f"❌ Error: {e}")
-            
-            # Formatear el texto
+                    print(f"❌ Error al preparar alerta: {e}")
             clothing_boxes = det.get("clothing_boxes", [])
             needs_full_body = det.get("needs_full_body_view", False)
 

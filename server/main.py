@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from scripts.seed_students import STUDENTS_MAP
 import uvicorn
 import os
 import logging
@@ -8,6 +9,7 @@ import base64
 import io
 import time
 import cv2
+import requests 
 import numpy as np
 import socketio
 import asyncio
@@ -188,10 +190,43 @@ def start_socket():
 
 app.include_router(api_router)
 
+def auto_sync_with_node():
+    # CAMBIO CLAVE: Usar host.docker.internal para salir del contenedor
+    URL_NODE = "http://host.docker.internal:3067/AISentinelAdmin/v1/students/auto-sync" 
+    print(f"\n[AUTO-SYNC] Intentando sincronizar con: {URL_NODE}")
+    payload = []
+    for key, (carnet, nombre_completo) in STUDENTS_MAP.items():
+        nombres = nombre_completo.split(" ", 1)
+        payload.append({
+            "idCard": carnet,
+            "studentName": nombres[0],
+            "studentSurname": nombres[1] if len(nombres) > 1 else "",
+            "email": f"{key}-{carnet}@kinal.edu.gt",
+            "grade": "6TO" 
+        })
+    try:
+        logger.info(f"[AUTO-SYNC] Enviando {len(payload)} estudiantes...")
+        print(f"[AUTO-SYNC] Enviando {len(payload)} estudiantes...")
+        response = requests.post(URL_NODE, json=payload, timeout=10)
+        if response.status_code == 200:
+            res_data = response.json()
+            print(f"✅ [AUTO-SYNC] Éxito. Creados: {res_data.get('newlyCreated')}")
+            logger.info(f"[AUTO-SYNC] Éxito. Creados: {res_data.get('newlyCreated')}")
+        else:
+            print(f"⚠️ [AUTO-SYNC] Node respondió error {response.status_code}: {response.text}")
+            logger.error(f"[AUTO-SYNC] Node respondió error {response.status_code}: {response.text}")
+
+    except requests.exceptions.ConnectionError:
+        print(f"❌ [AUTO-SYNC] Error: No se pudo conectar a Node. ¿Está el servidor en el puerto 3067?")
+        logger.error(f"[AUTO-SYNC] Error: No se pudo conectar a Node. ¿Está el servidor en el puerto 3067?")
+    except Exception as e:
+        print(f"❌ [AUTO-SYNC] Error inesperado: {e}")
+        logger.error(f"[AUTO-SYNC] Error inesperado: {e}")
+
 @app.on_event("startup")
 async def startup_event():
     logger.info("🟢 Servidor AI Sentinel Iniciado...")
-
+    Thread(target=auto_sync_with_node, daemon=True).start()
     import torch
     if torch.cuda.is_available():
         gpu_name  = torch.cuda.get_device_name(0)
@@ -205,6 +240,7 @@ async def startup_event():
 
     thread = Thread(target=start_socket, daemon=True)
     thread.start()
+    
 
 @app.get("/")
 def read_root():

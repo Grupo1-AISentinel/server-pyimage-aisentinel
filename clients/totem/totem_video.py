@@ -5,6 +5,9 @@ import threading
 import numpy as np
 import os
 import sys
+import requests
+import base64
+import time
 
 # Agregar ruta para que ui_utils.py pueda ser importado
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -596,6 +599,9 @@ def open_cam():
     global frame_actual, DISPLAY_W, DISPLAY_H, SCALE_X, SCALE_Y, SEND_W, SEND_H
     global SEND_W_SLOW, SEND_H_SLOW, SCALE_X_SLOW, SCALE_Y_SLOW
     global _fps_contador, _fps_ts, _fps_actual
+    url_alerts = "http://localhost:3067/AISentinelAdmin/v1/alerts/automatic-detection"
+    ultimo_envio_alerta = 0 
+    intervalo_alerta = 10
 
     ruta_video = "./assets/3.MOV"
 
@@ -693,7 +699,47 @@ def open_cam():
             if det:
                 nombre         = det.get("identity", "Desconocido")
                 tiene_uniforme = det.get("has_uniform")
+                id_card = det.get("student_id")
+                tiene_accesorio = any(
+                    cb.get("class", "").upper() == "ACCESORIO" 
+                    for cb in det.get("clothing_boxes_disp", [])
+                )
 
+                # --- LÓGICA DE ALERTA MEJORADA ---
+                tiempo_actual = time.time()
+                
+                # Definimos los motivos
+                motivo = None
+                if tiene_uniforme is False:
+                    motivo = "UNIFORME_INCOMPLETO"
+                elif tiene_accesorio:
+                    motivo = "ACCESORIO_NO_PERMITIDO"
+
+                if motivo and id_card and (tiempo_actual - ultimo_envio_alerta > intervalo_alerta):
+                    try:
+                        _, buffer_img = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+                        img_base64 = base64.b64encode(buffer_img).decode('utf-8')
+
+                        payload = {
+                            "idCard": id_card, 
+                            "has_uniform": tiene_uniforme,
+                            "has_accessory": tiene_accesorio,
+                            "reason": motivo, 
+                            "image": img_base64
+                        }
+                        
+                        def enviar_peticion(p):
+                            try:
+                                requests.post(url_alerts, json=p, timeout=3.0)
+                                print(f"Alerta Enviada ({p['reason']}): {id_card}")
+                            except Exception as e:
+                                print(f" Error HTTP: {e}")
+
+                        threading.Thread(target=enviar_peticion, args=(payload,), daemon=True).start()
+                        
+                        ultimo_envio_alerta = tiempo_actual 
+                    except Exception as e:
+                        print(f"❌ Error preparando alerta: {e}")
                 # Delta de posición: mueve clothing boxes con el track actual.
                 # Cuando el servidor detectó la ropa, la cara estaba en loc_d;
                 # ahora el Kalman predice que está en (cx_now, cy_now).
