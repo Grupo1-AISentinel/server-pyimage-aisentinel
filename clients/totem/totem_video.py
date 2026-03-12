@@ -3,6 +3,15 @@ import socketio
 import time
 import threading
 import numpy as np
+import os
+import sys
+import requests
+import base64
+import time
+
+# Agregar ruta para que ui_utils.py pueda ser importado
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from ui_utils import draw_futuristic_box
 
 URL_SERVIDOR   = "http://localhost:8000"
 NOMBRE_VENTANA = "AI Sentinel - En vivo"
@@ -202,8 +211,8 @@ class FaceTracker:
     Flujo al llegar resultados del pipeline completo (slow channel):
       - associate_identity() → asigna identity_data al track más cercano.
     """
-    MAX_MISSED = 12   # frames sin medición → eliminar track (~400 ms a 30 FPS)
-    MAX_DIST   = 90   # px en display para asociar detección → track existente
+    MAX_MISSED = 30   # frames sin medición → eliminar track (1 segundo a 30 FPS, antes 12)
+    MAX_DIST   = 150  # px en display para asociar detección → track existente (rápido, antes 90)
 
     def __init__(self):
         self.tracks: list[FaceTrack] = []
@@ -527,6 +536,8 @@ def hilo_envio_rapido():
 # ---------------------------------------------------------------------------
 # Hilo emisor: pipeline completo (identidad + uniforme)
 # ---------------------------------------------------------------------------
+_ultimo_envio_completo = 0.0
+
 def hilo_envio_completo():
     """
     Envía frames para el pipeline completo (identidad + uniforme) en 2× resolución.
@@ -540,10 +551,19 @@ def hilo_envio_completo():
       YOLO+ResNet+ChromaDB para esa persona innecesariamente.
       El recuadro sigue verde en el cliente gracias al identity_data cacheado.
     """
+    global _ultimo_envio_completo
     while True:
         with _lock_tracker:
             hay_tracks = len(face_tracker.tracks) > 0
             now = time.time()
+            
+            # ¿Hay rostros que acaban de entrar y no tienen NINGÚN dato?
+            hay_urgentes = any(
+                t.identity_data is None
+                for t in face_tracker.tracks
+                if t.missed <= FaceTracker.MAX_MISSED
+            )
+            
             # ¿Hay algún track activo que necesite verificación?
             hay_pendientes = any(
                 t.identity_data is None
@@ -553,15 +573,23 @@ def hilo_envio_completo():
                 if t.missed <= FaceTracker.MAX_MISSED
             )
 
+        # Si hay personas nuevas, reducir el intervalo a 0.2s para que se procesen rápido.
+        # De lo contrario, usar el intervalo normal (1.5s).
+        intervalo_actual = 0.2 if hay_urgentes else INTERVALO_COMPLETO_SEG
+
         if sio.connected and frame_actual is not None and hay_tracks and hay_pendientes:
-            try:
-                resized = cv2.resize(frame_actual, (SEND_W_SLOW, SEND_H_SLOW))
-                _, buf  = cv2.imencode(".jpg", resized,
-                                       [int(cv2.IMWRITE_JPEG_QUALITY), 92])
-                sio.emit("detect_frame", {"image": buf.tobytes()})
-            except Exception as e:
-                print(f"Error emit completo: {e}")
-        time.sleep(INTERVALO_COMPLETO_SEG)
+            if now - _ultimo_envio_completo >= intervalo_actual:
+                _ultimo_envio_completo = now
+                try:
+                    resized = cv2.resize(frame_actual, (SEND_W_SLOW, SEND_H_SLOW))
+                    _, buf  = cv2.imencode(".jpg", resized,
+                                           [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+                    sio.emit("detect_frame", {"image": buf.tobytes()})
+                except Exception as e:
+                    print(f"Error emit completo: {e}")
+        
+        # Sleep muy corto para no bloquear y reaccionar instantáneamente
+        time.sleep(0.05)
 
 
 # ---------------------------------------------------------------------------
@@ -571,8 +599,16 @@ def open_cam():
     global frame_actual, DISPLAY_W, DISPLAY_H, SCALE_X, SCALE_Y, SEND_W, SEND_H
     global SEND_W_SLOW, SEND_H_SLOW, SCALE_X_SLOW, SCALE_Y_SLOW
     global _fps_contador, _fps_ts, _fps_actual
+    url_alerts = "http://localhost:3067/AISentinelAdmin/v1/alerts/automatic-detection"
+    ultimo_envio_alerta = 0 
+    intervalo_alerta = 10
 
     ruta_video = "./assets/3.MOV"
+
+    if not os.path.exists(ruta_video):
+        print(f"\n[ERROR CRÍTICO] El archivo de video '{ruta_video}' no fue encontrado.")
+        print("-> Asegurate de que exista o utiliza 'totem_camera.py' para usar la webcam viva.\n")
+        sys.exit(1)
 
     # Resolución nativa del video
     probe    = cv2.VideoCapture(ruta_video)
@@ -663,7 +699,47 @@ def open_cam():
             if det:
                 nombre         = det.get("identity", "Desconocido")
                 tiene_uniforme = det.get("has_uniform")
+                id_card = det.get("student_id")
+                tiene_accesorio = any(
+                    cb.get("class", "").upper() == "ACCESORIO" 
+                    for cb in det.get("clothing_boxes_disp", [])
+                )
 
+                # --- LÓGICA DE ALERTA MEJORADA ---
+                tiempo_actual = time.time()
+                
+                # Definimos los motivos
+                motivo = None
+                if tiene_uniforme is False:
+                    motivo = "UNIFORME_INCOMPLETO"
+                elif tiene_accesorio:
+                    motivo = "ACCESORIO_NO_PERMITIDO"
+
+                if motivo and id_card and (tiempo_actual - ultimo_envio_alerta > intervalo_alerta):
+                    try:
+                        _, buffer_img = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+                        img_base64 = base64.b64encode(buffer_img).decode('utf-8')
+
+                        payload = {
+                            "idCard": id_card, 
+                            "has_uniform": tiene_uniforme,
+                            "has_accessory": tiene_accesorio,
+                            "reason": motivo, 
+                            "image": img_base64
+                        }
+                        
+                        def enviar_peticion(p):
+                            try:
+                                requests.post(url_alerts, json=p, timeout=3.0)
+                                print(f"Alerta Enviada ({p['reason']}): {id_card}")
+                            except Exception as e:
+                                print(f" Error HTTP: {e}")
+
+                        threading.Thread(target=enviar_peticion, args=(payload,), daemon=True).start()
+                        
+                        ultimo_envio_alerta = tiempo_actual 
+                    except Exception as e:
+                        print(f"❌ Error preparando alerta: {e}")
                 # Delta de posición: mueve clothing boxes con el track actual.
                 # Cuando el servidor detectó la ropa, la cara estaba en loc_d;
                 # ahora el Kalman predice que está en (cx_now, cy_now).
@@ -694,16 +770,13 @@ def open_cam():
             else:
                 color_rec = (0, 165, 255)      # naranja
 
-            # Recuadro de cara
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color_rec, 2)
-
+            # Recuadro de cara futurista
             sufijo = ("" if tiene_uniforme is None
                       else (" | UNIFORME: SI" if tiene_uniforme else " | UNIFORME: NO"))
-            cv2.putText(frame, f"{nombre}{sufijo}",
-                        (x1, max(y1 - 10, 15)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_rec, 2)
+            etiqueta = f"{nombre}{sufijo}"
+            draw_futuristic_box(frame, x1, y1, x2, y2, color_rec, text=etiqueta, text_size=0.6)
 
-            # Cajas de ropa (con delta aplicado)
+            # Cajas de ropa futuristas
             for cb in clothing_items:
                 bx1, by1, bx2, by2 = cb["box"]
                 if cb["class"].upper() == "ACCESORIO":
@@ -712,10 +785,9 @@ def open_cam():
                     c_color = (0, 200, 0)   # prenda válida → verde
                 else:
                     c_color = (0, 100, 255) # prenda inválida → naranja
-                cv2.rectangle(frame, (bx1, by1), (bx2, by2), c_color, 2)
-                cv2.putText(frame, cb["class"].upper(),
-                            (bx1, max(by1 - 5, 10)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, c_color, 2)
+                
+                # Borde más delgado y elegante para cajas de ropa interna
+                draw_futuristic_box(frame, bx1, by1, bx2, by2, c_color, text=cb["class"].upper(), text_size=0.5)
 
         cv2.imshow(NOMBRE_VENTANA, frame)
         if cv2.waitKey(_ms_por_frame) & 0xFF == ord("q"):
