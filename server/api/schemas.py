@@ -11,7 +11,7 @@ class StudentRegister(BaseModel):
 
 class UniformRegister(BaseModel):
     item_id: str
-    item_type: str # 'jacket', 'shirt', 'pants'
+    item_type: str  # Tipos lógicos admitidos: 'jacket', 'shirt', 'pants'
     images: list = None
 
 class DetectedStudent(BaseModel):

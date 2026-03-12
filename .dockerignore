@@ -1,0 +1,6 @@
+server/chroma_data/
+server/venv/
+venv/
+.git/
+__pycache__/
+*.pyc

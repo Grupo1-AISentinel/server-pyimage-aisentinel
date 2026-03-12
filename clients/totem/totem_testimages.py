@@ -19,6 +19,10 @@ import cv2
 import requests
 import numpy as np
 
+# Agregar ruta para que ui_utils.py pueda ser importado
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from ui_utils import draw_futuristic_box
+
 URL_SERVIDOR = "http://localhost:8000"
 VALID_EXT    = {'.jpg', '.jpeg', '.png', '.webp', '.bmp'}
 
@@ -74,38 +78,24 @@ def _dibujar_resultados(frame: np.ndarray, students: list) -> np.ndarray:
         else:
             color = COLOR_NOK
 
-        # Recuadro de cara
-        cv2.rectangle(annotated, (left, top), (right, bottom), color, 3)
-
-        # Etiqueta identidad + uniforme
-        unif_str = "UNIFORME ✓" if has_unif else "SIN UNIFORME"
+        # Recuadro futurista de cara
+        unif_str = "UNIFORME OK" if has_unif else "SIN UNIFORME"
         conf_str = f" ({confidence})" if confidence else ""
         label    = f"{identity}{conf_str} | {unif_str}"
-
-        # Fondo semitransparente para la etiqueta
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
-        cv2.rectangle(annotated,
-                      (left, max(top - th - 12, 0)),
-                      (left + tw + 6, max(top - 2, th + 2)),
-                      (30, 30, 30), cv2.FILLED)
-        cv2.putText(annotated, label,
-                    (left + 3, max(top - 5, th + 1)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
+        
+        draw_futuristic_box(annotated, left, top, right, bottom, color, text=label, text_size=0.6)
 
         # Detalles de ropa (clothing_details) debajo del recuadro
         if clothing_d:
             cv2.putText(annotated, clothing_d,
                         (left, min(bottom + 20, annotated.shape[0] - 5)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
 
         # Bounding boxes de prendas individuales
         for cb in student.get("clothing_boxes", []):
             bx1, by1, bx2, by2 = cb["box"]
             c_color = COLOR_ROPA_OK if cb.get("valid") else COLOR_ROPA_NOK
-            cv2.rectangle(annotated, (bx1, by1), (bx2, by2), c_color, 2)
-            cv2.putText(annotated, cb["class"].upper(),
-                        (bx1, max(by1 - 5, 10)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, c_color, 2)
+            draw_futuristic_box(annotated, bx1, by1, bx2, by2, c_color, text=cb["class"].upper(), text_size=0.5)
 
         # Aviso de cuerpo incompleto
         if needs_body:

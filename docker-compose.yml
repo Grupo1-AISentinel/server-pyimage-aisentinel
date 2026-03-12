@@ -10,11 +10,12 @@ services:
     volumes:
       - ./server:/app
       - /app/venv
-      - ./server/chroma_data:/app/chroma_data
+      - chroma_data:/app/chroma_data
     env_file:
       - .env
     environment:
       - ANONYMIZED_TELEMETRY=False
+      - YOLO_CONFIG_DIR=/tmp/Ultralytics
     restart: always
     deploy:
       resources:
@@ -23,3 +24,6 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+
+volumes:
+  chroma_data:
