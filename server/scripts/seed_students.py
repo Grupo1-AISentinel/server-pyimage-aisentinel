@@ -19,7 +19,6 @@ VALID_EXT = {'.jpg', '.jpeg', '.png', '.webp', '.bmp'}
 
 # Mapa: nombre_directorio → (carnet, nombre_completo)
 STUDENTS_MAP = {
-    "asiliezar": ("2024342", "Angel Siliezar"),
     "itiguila":  ("2024295", "Isaac Tiguila"),
     "jyaxon":    ("2024442", "Jeferson Yaxon"),
     "asosa":     ("2024449", "Anderson Sosa"),

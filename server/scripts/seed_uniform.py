@@ -1,47 +1,7 @@
 """
 seed_uniform.py — Registro multi-clase de uniformes en ChromaDB.
-
-ESTRUCTURA DE DIRECTORIOS ESPERADA:
-  img/uniforms/
-    <marca>/
-      close/   → chumpas cerradas (ej. clasic/close/, promo33/close/)
-      open/    → chumpas abiertas (ej. clasic/open/, promo33/open/)
-    tshirt/    → camisas oficiales (sin subdirectorios open/close)
-
-ESTRATEGIA DE VECTORES INDIVIDUALES:
-  En lugar de promediar todos los vectores en UNO por prenda, se guarda CADA
-  vector detectado como una entrada separada en ChromaDB.
-
-  Por qué es mejor:
-    - El promedio "difumina" las diferencias intra-clase → peor discriminación.
-    - Con vectores individuales, ChromaDB busca el vecino más cercano entre
-      todos los ejemplares registrados → encuentra el ejemplo más similar.
-    - Una chumpa con iluminación particular matchea con el ejemplar registrado
-      en iluminación similar, no con el centroide difuso de todas.
-
-  IDs: <base_id>_<índice>  (ej. "clasic_jacket_close_0", "camisa_oficial_12")
-  Todos los vectores del mismo tipo llevan el mismo metadata["tipo"] y
-  metadata["base_id"] para trazar su origen.
-
-BÚSQUEDA TIPADA (crud_uniform.py):
-  search_uniform_by_vector(vector, tipo="jacket") busca solo entre
-  los vectores cuyo metadata["tipo"] == "jacket".
-  → Elimina la confusión cross-tipo que causaba falsos rechazos.
-
-ESTADOS DE JACKET:
-  - close: chumpa cerrada → la camisa NO es obligatoria en validación
-  - open:  chumpa abierta → la camisa SÍ es obligatoria en validación
-
-CLASES ESTRUCTURALES DEL DETECTOR:
-  - jacket_open / jacket_close se mapean al tipo lógico "jacket"
-  - shirt se mapea a "shirt"
-  - pant/pants se mapea a "pants"
-
-LIMPIEZA AL EJECUTAR:
-  Por defecto se resetea la colección de uniformes para evitar mezcla de embeddings.
-  Ejecutar primero seed_students y luego seed_uniform para una población limpia.
-  Para conservar la colección existente, definir RESET_UNIFORM_COLLECTION=false.
 """
+
 import os
 import sys
 import cv2
@@ -106,16 +66,7 @@ def extract_vectors_from_images(images: list[str], priority_class: str) -> dict:
 def save_pool_individual(item_id_prefix: str, tipo: str, vectors: list,
                          extra_meta: dict = None) -> int:
     """
-    Guarda CADA vector como una entrada independiente en ChromaDB.
-
-    ID: <item_id_prefix>_<índice>  (ej. "clasic_jacket_close_0")
-    metadata incluye siempre:
-      - tipo:    categoria de prenda ("jacket", "shirt", "pants")
-      - valido:  True
-      - base_id: prefijo sin índice (para agrupar variantes del mismo item)
-      - (+ los campos de extra_meta: estado, marca, etc.)
-
-    Retorna el número de vectores guardados.
+    
     """
     if not vectors:
         print(f"  [SKIP] {item_id_prefix}: sin vectores para guardar.")

@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from scripts.seed_students import STUDENTS_MAP
 import uvicorn
 import os
+import mimetypes
 import logging
 import traceback
 import base64
@@ -175,6 +176,88 @@ def handle_node_data(data):
         logger.error(f"❌ Error crítico en el flujo: {e}")
         sio.emit('python_registro_completado', {'carnet': carnet, 'status': 'error', 'message': str(e)})
 
+@sio.on('enviar_uniforme_a_python')
+def handle_uniform_data(data):
+    """
+    Recibe datos de uniforme desde Node.js vía Socket.IO bidireccional.
+    Campos esperados:
+      - name: str (nombre del uniforme, ej: "Chumpa Clásica")
+      - type: str (JACKET | TSHIRT | PANTS)
+      - fotos: list[{buffer|base64}] (imágenes del uniforme)
+    """
+    from services.clothing_engine import ClothingEngine
+
+    uniform_name = data.get('name', 'Sin Nombre')
+    uniform_type = data.get('type', '')
+    fotos_raw = data.get('fotos', [])
+
+    try:
+        logger.info(f"👔 Procesando registro de uniforme: {uniform_name} (tipo: {uniform_type})")
+        lista_imagenes = []
+
+        for f in fotos_raw:
+            try:
+                raw_data = f.get('buffer') or f.get('base64')
+                if not raw_data:
+                    continue
+
+                if isinstance(raw_data, str):
+                    if "," in raw_data:
+                        raw_data = raw_data.split(",")[1]
+                    img_bytes = base64.b64decode(raw_data)
+                else:
+                    img_bytes = raw_data
+
+                image = Image.open(io.BytesIO(img_bytes))
+                image = ImageOps.exif_transpose(image)
+                image = image.convert('RGB')
+
+                img_np = np.array(image)
+                lista_imagenes.append(img_np)
+                logger.info(f"   - Imagen uniforme decodificada: {image.size[0]}x{image.size[1]}")
+
+            except Exception as e:
+                logger.error(f"   - Error procesando imagen de uniforme: {e}")
+
+        if not lista_imagenes:
+            raise ValueError("No se pudieron decodificar imágenes válidas del uniforme.")
+
+        # Generar un ID único basado en el nombre (slug limpio)
+        item_id = uniform_name.lower().replace(" ", "_").replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
+
+        success, count = ClothingEngine.register_clothing_from_numpy(
+            item_id=item_id,
+            item_type=uniform_type,
+            images_np=lista_imagenes,
+            extra_meta={"nombre_display": uniform_name}
+        )
+
+        if success:
+            logger.info(f"🎯 Registro de uniforme EXITOSO: {uniform_name} → {count} vectores")
+            sio.emit('python_uniforme_registrado', {
+                'name': uniform_name,
+                'type': uniform_type,
+                'status': 'success',
+                'vectors': count
+            })
+        else:
+            logger.error(f"❌ No se detectaron prendas '{uniform_type}' en las imágenes de {uniform_name}")
+            sio.emit('python_uniforme_registrado', {
+                'name': uniform_name,
+                'type': uniform_type,
+                'status': 'error',
+                'message': f'No se detectó prenda tipo {uniform_type} en las imágenes. Intente con fotos más claras.'
+            })
+
+    except Exception as e:
+        logger.error(f"❌ Error crítico registrando uniforme: {e}")
+        sio.emit('python_uniforme_registrado', {
+            'name': uniform_name,
+            'type': uniform_type,
+            'status': 'error',
+            'message': str(e)
+        })
+
 def start_socket():
     node_url = "http://host.docker.internal:3067"
     while True:
@@ -223,10 +306,114 @@ def auto_sync_with_node():
         print(f"❌ [AUTO-SYNC] Error inesperado: {e}")
         logger.error(f"[AUTO-SYNC] Error inesperado: {e}")
 
+def auto_sync_uniforms_with_node():
+    """Sincroniza los uniformes con Node.js enviando nombre, tipo y thumbnail recortado por YOLO."""
+    URL_NODE = "http://host.docker.internal:3067/AISentinelAdmin/v1/uniforms/auto-sync"
+    from services.clothing_engine import ClothingEngine
+    
+    print(f"\n[AUTO-SYNC-UNIFORMS] Intentando sincronizar con: {URL_NODE}")
+
+    VALID_EXT = {'.jpg', '.jpeg', '.png', '.webp', '.bmp'}
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    uniforms_dir = os.path.join(base_dir, "img", "uniforms")
+
+    # Mapa: (tipo_interno) -> (nombre para Node, tipo para Node)
+    # Se busca en carpetas específicas, pero pants puede buscar en cualquier lado.
+    UNIFORMS_CONFIG = [
+        {"search_dirs": ["clasic/close", "clasic/open"], "name": "Chumpa Clásica",   "type": "JACKET", "internal": "jacket"},
+        {"search_dirs": ["tshirt"],                     "name": "Camisa Oficial",   "type": "TSHIRT", "internal": "shirt"},
+        {"search_dirs": ["pants", "clasic/close", "tshirt"], "name": "Pantalon Oficial", "type": "PANTS",  "internal": "pants"},
+    ]
+
+    payload = []
+
+    for cfg in UNIFORMS_CONFIG:
+        uniform_name = cfg["name"]
+        uniform_type = cfg["type"]
+        internal_key = cfg["internal"]
+        
+        found_crop_b64 = None
+        mime_type = "image/jpeg"
+
+        # Buscar en las carpetas candidatas hasta encontrar un recorte válido por YOLO
+        for rel_path in cfg["search_dirs"]:
+            dir_path = os.path.join(uniforms_dir, rel_path)
+            if not os.path.isdir(dir_path):
+                continue
+            
+            images = sorted([
+                f for f in os.listdir(dir_path)
+                if os.path.splitext(f.lower())[1] in VALID_EXT
+            ])
+
+            for img_name in images:
+                img_path = os.path.join(dir_path, img_name)
+                frame = cv2.imread(img_path)
+                if frame is None:
+                    continue
+                
+                # Usar el motor de ropa para extraer recortes
+                detections = ClothingEngine.extract_all_clothing_from_image(frame, conf=0.30)
+                crops = detections.get(internal_key, [])
+                
+                if crops:
+                    # Tomar el primer recorte encontrado
+                    crop = crops[0]
+                    # Convertir el recorte (numpy) a bytes JPG
+                    success, buffer = cv2.imencode(".jpg", crop)
+                    if success:
+                        found_crop_b64 = base64.b64encode(buffer).decode("utf-8")
+                        logger.info(f"[AUTO-SYNC-UNIFORMS] Recorte generado para {uniform_name} usando {img_name}")
+                        break # Encontrado en esta imagen
+            
+            if found_crop_b64:
+                break # Encontrado para este uniforme
+
+        if not found_crop_b64:
+            logger.warning(f"[AUTO-SYNC-UNIFORMS] No se pudo encontrar un recorte de YOLO para: {uniform_name}")
+            continue
+
+        payload.append({
+            "name": uniform_name,
+            "type": uniform_type,
+            "thumbnail": {
+                "data": found_crop_b64,
+                "mimetype": mime_type
+            }
+        })
+
+    if not payload:
+        logger.warning("[AUTO-SYNC-UNIFORMS] No se encontraron uniformes para sincronizar.")
+        return
+
+    created = 0
+    for uniform in payload:
+        try:
+            logger.info(f"[AUTO-SYNC-UNIFORMS] Enviando: {uniform['name']} ({uniform['type']})...")
+            response = requests.post(URL_NODE, json=uniform, timeout=15)
+            if response.status_code == 200 or response.status_code == 201:
+                created += 1
+                print(f"✅ [AUTO-SYNC-UNIFORMS] {uniform['name']} — OK")
+                logger.info(f"[AUTO-SYNC-UNIFORMS] {uniform['name']} — OK")
+            else:
+                print(f"⚠️ [AUTO-SYNC-UNIFORMS] {uniform['name']} — Error {response.status_code}: {response.text}")
+                logger.error(f"[AUTO-SYNC-UNIFORMS] {uniform['name']} — Error {response.status_code}: {response.text}")
+
+        except requests.exceptions.ConnectionError:
+            print(f"❌ [AUTO-SYNC-UNIFORMS] Error: No se pudo conectar a Node.")
+            logger.error(f"[AUTO-SYNC-UNIFORMS] Error: No se pudo conectar a Node.")
+            break
+        except Exception as e:
+            print(f"❌ [AUTO-SYNC-UNIFORMS] Error inesperado con {uniform['name']}: {e}")
+            logger.error(f"[AUTO-SYNC-UNIFORMS] Error inesperado: {e}")
+
+    print(f"[AUTO-SYNC-UNIFORMS] Completado: {created}/{len(payload)} uniformes sincronizados.")
+
 @app.on_event("startup")
 async def startup_event():
     logger.info("🟢 Servidor AI Sentinel Iniciado...")
     Thread(target=auto_sync_with_node, daemon=True).start()
+    Thread(target=auto_sync_uniforms_with_node, daemon=True).start()
     import torch
     if torch.cuda.is_available():
         gpu_name  = torch.cuda.get_device_name(0)

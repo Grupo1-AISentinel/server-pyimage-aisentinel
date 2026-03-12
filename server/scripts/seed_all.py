@@ -1,8 +1,5 @@
 """
 seed_all.py — Ejecuta seed_students y seed_uniform en orden.
-
-1. seed_students pobla caras.
-2. seed_uniform resetea la colección de uniformes (según RESET_UNIFORM_COLLECTION) y pobla catálogo.
 """
 import os
 import runpy
@@ -33,8 +30,6 @@ if __name__ == "__main__":
     
     import subprocess
     
-    # Usar subprocess en lugar de runpy para aislar completamente
-    # los procesos y evitar bugs de bloqueos sqlite3/ChromaDB
     subprocess.check_call([sys.executable, os.path.join(_server_dir, "scripts", "seed_students.py")])
     print()
     subprocess.check_call([sys.executable, os.path.join(_server_dir, "scripts", "seed_uniform.py")])

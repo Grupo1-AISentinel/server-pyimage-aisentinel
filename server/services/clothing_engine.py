@@ -355,6 +355,103 @@ class ClothingEngine:
         return True
 
     @staticmethod
+    def register_clothing_from_numpy(item_id: str, item_type: str,
+                                     images_np: list, extra_meta: dict = None):
+        """
+        Registra prendas de uniforme a partir de imágenes numpy (BGR).
+
+        Flujo:
+          1. YOLO clothing structure detecta crops de la prenda en cada imagen.
+          2. Para JACKET: usa JACKET_STATE_BY_CLASS para clasificar open/close
+             y cada crop se guarda con su estado individual en metadata.
+          3. Para TSHIRT/PANTS: los crops se guardan con su tipo directo.
+          4. Cada crop → DINOv2 embedding 384D → upsert individual en ChromaDB.
+
+        Retorna (success: bool, count: int).
+        """
+        # Mapear tipos de Node.js a tipos internos
+        TYPE_MAP = {"JACKET": "jacket", "TSHIRT": "shirt", "PANTS": "pants"}
+        internal_type = TYPE_MAP.get(item_type.upper(), item_type.lower())
+
+        yolo_classes = {
+            "jacket": {"jacket", "jacket_open", "jacket_close"},
+            "shirt":  {"shirt"},
+            "pants":  {"pant", "pants"},
+        }.get(internal_type)
+
+        if not yolo_classes:
+            print(f"[ERROR] Tipo de uniforme desconocido: {item_type}")
+            return False, 0
+
+        vectors_saved = 0
+
+        for img_idx, img_np in enumerate(images_np):
+            if img_np is None or img_np.size == 0:
+                continue
+
+            # Asegurar BGR para YOLO (las imágenes de PIL llegan en RGB)
+            if len(img_np.shape) == 3 and img_np.shape[2] == 3:
+                frame_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+            else:
+                frame_bgr = img_np
+
+            with global_gpu_lock:
+                results = yolo_clothing_structure_model(
+                    frame_bgr, device=DEVICE_YOLO, verbose=False,
+                    imgsz=640, half=USE_HALF, conf=0.20
+                )
+                if DEVICE_YOLO.startswith("0") or DEVICE_YOLO.startswith("cuda"):
+                    torch.cuda.synchronize()
+
+            for result in results:
+                for box in result.boxes:
+                    class_name = result.names[int(box.cls[0])]
+                    if class_name not in yolo_classes:
+                        continue
+
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    crop = frame_bgr[y1:y2, x1:x2]
+                    if crop.size == 0:
+                        continue
+
+                    vector = ClothingEngine._get_embedding(crop)
+                    if vector is None:
+                        continue
+
+                    # Construir metadata individual por crop
+                    crop_meta = {
+                        "tipo": internal_type,
+                        "base_id": item_id,
+                        **(extra_meta or {}),
+                    }
+
+                    # Para chumpas: clasificar open/close por clase YOLO
+                    if internal_type == "jacket":
+                        estado = JACKET_STATE_BY_CLASS.get(class_name)
+                        if estado:
+                            crop_meta["estado"] = estado
+                            print(f"  [REGISTER] img#{img_idx} → {class_name} → estado={estado}")
+                        else:
+                            # Clase genérica "jacket" sin estado específico
+                            crop_meta["estado"] = "close"  # default conservador
+                            print(f"  [REGISTER] img#{img_idx} → {class_name} → estado=close (default)")
+
+                    metadata = ClothingEngine._build_uniform_metadata(
+                        crop_meta, source="socket_register"
+                    )
+                    upsert_uniform_vector(
+                        f"{item_id}_{vectors_saved}", vector, metadata
+                    )
+                    vectors_saved += 1
+
+        if vectors_saved == 0:
+            print(f"[ERROR] YOLO no detectó '{internal_type}' en las {len(images_np)} imágenes de {item_id}.")
+        else:
+            print(f"[OK] '{item_id}' ({internal_type}) — {vectors_saved} vectores guardados en ChromaDB.")
+
+        return vectors_saved > 0, vectors_saved
+
+    @staticmethod
     def _validate_garment_embedding(crop, tipo: str):
         """
         Validation vs ChromaDB specific dynamic uniform catalog.
