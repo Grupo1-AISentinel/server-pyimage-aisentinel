@@ -40,11 +40,20 @@ def get_images_in_dir(dir_path: str) -> list[str]:
 def populate_students():
     base_dir    = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     students_dir = os.path.join(base_dir, "img", "students")
-    engine      = BiometricEngine()
 
     print("=" * 60)
     print("  SEED ESTUDIANTES — Auto-discovery de imágenes")
     print("=" * 60)
+
+    from db.connection import FACES_COLLECTION_NAME, client
+    print(f"[INFO] Eliminando colección '{FACES_COLLECTION_NAME}' para evitar basura de pruebas anteriores...")
+    try:
+        client.delete_collection(name=FACES_COLLECTION_NAME)
+        print("[INFO] Colección eliminada exitosamente.")
+    except Exception:
+        pass
+
+    engine = BiometricEngine()
 
     # Descubrir automáticamente todos los subdirectorios
     try:
