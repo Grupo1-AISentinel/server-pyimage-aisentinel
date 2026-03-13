@@ -1,0 +1,20 @@
+fastapi==0.110.0
+uvicorn==0.27.1
+python-dotenv==1.0.1
+chromadb==0.4.24
+deepface
+tf-keras
+transformers==4.33.2
+pydantic==2.6.3
+python-socketio[client]==5.11.1
+numpy<2.0.0
+python-multipart
+ultralytics>=8.3.0
+lap>=0.5.12
+# torch y torchvision se instalan en el Dockerfile con soporte CUDA específico
+# versión sin grafica
+# opencv-python-headless
+opencv-python
+requests
+huggingface-hub
+# bust cache please

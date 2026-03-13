@@ -1,0 +1,29 @@
+services:
+  pyimage-service:
+    build: 
+      context: .
+      dockerfile: server/Dockerfile
+    image: aisentinel-backend:latest
+    container_name: server-pyimage-aisentinel
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - ./server:/app
+      - /app/venv
+      - chroma_data:/app/chroma_data
+    env_file:
+      - .env
+    environment:
+      - ANONYMIZED_TELEMETRY=False
+      - YOLO_CONFIG_DIR=/tmp/Ultralytics
+    restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  chroma_data:
