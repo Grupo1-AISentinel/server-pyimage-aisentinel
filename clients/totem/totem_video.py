@@ -700,13 +700,35 @@ def open_cam():
                 nombre         = det.get("identity", "Desconocido")
                 tiene_uniforme = det.get("has_uniform")
                 id_card = det.get("student_id")
+                tiempo_actual = time.time()
+                
+                if id_card and nombre != "Desconocido":
+                    if (tiempo_actual - ultimo_envio_alerta > intervalo_alerta):
+                        try:
+                            payload_asistencia = {
+                                "idCard": id_card,
+                            }
+                            
+                            def enviar_asistencia(p):
+                                try:
+                                    requests.post("http://localhost:3067/AISentinelAdmin/v1/attendance/automatic-detection", 
+                                                json=p, timeout=2.0)
+                                    print(f"📍 Asistencia automática enviada: {p['idCard']}")
+                                except Exception as e:
+                                    print(f"❌ Error enviando asistencia: {e}")
+
+                            threading.Thread(target=enviar_asistencia, args=(payload_asistencia,), daemon=True).start()
+                            
+                            ultimo_envio_alerta = tiempo_actual 
+                        except Exception as e:
+                            print(f"Error preparando frame: {e}")
+                
                 tiene_accesorio = any(
                     cb.get("class", "").upper() == "ACCESORIO" 
                     for cb in det.get("clothing_boxes_disp", [])
                 )
-
+                
                 # --- LÓGICA DE ALERTA MEJORADA ---
-                tiempo_actual = time.time()
                 
                 # Definimos los motivos
                 motivo = None
