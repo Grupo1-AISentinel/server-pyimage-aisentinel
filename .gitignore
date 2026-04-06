@@ -19,3 +19,31 @@ chroma_data/
 test/img
 clients/assets/valid-images
 valid-images/
+
+# Archivos multimedia de prueba (NO SUBIR)
+*.mp4
+*.MOV
+*.avi
+assets/*.MOV
+assets/test-images/
+clients/assets/
+assets/video/
+server/img
+# Modelos de Inteligencia Artificial (Pesos)
+*.pt
+*.pth
+*.onnx
+*.bin
+
+# Base de datos vectorial (ChromaDB)
+chroma_data/
+server/chroma_data/
+
+# Entornos y variables
+venv/
+env/
+.env
+__pycache__/
+*.py[cod]
+*$py.class
+.vscode/
