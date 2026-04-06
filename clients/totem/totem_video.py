@@ -489,7 +489,7 @@ def conectar_sio_background():
 def leer_camara_continuamente():
     """Lee frames del video y los almacena pre-resizeados a DISPLAY_W x DISPLAY_H."""
     global frame_actual
-    ruta_video  = "./assets/3.MOV"
+    ruta_video  = "./assets/video/3.mp4"
     cap         = cv2.VideoCapture(ruta_video)
     fps_video   = cap.get(cv2.CAP_PROP_FPS) or 30
     intervalo   = 1.0 / fps_video
@@ -603,7 +603,7 @@ def open_cam():
     ultimo_envio_alerta = 0 
     intervalo_alerta = 10
 
-    ruta_video = "./assets/3.MOV"
+    ruta_video = "./assets/video/3.mp4"
 
     if not os.path.exists(ruta_video):
         print(f"\n[ERROR CRÍTICO] El archivo de video '{ruta_video}' no fue encontrado.")
