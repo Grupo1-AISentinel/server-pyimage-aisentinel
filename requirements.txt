@@ -11,10 +11,6 @@ numpy<2.0.0
 python-multipart
 ultralytics>=8.3.0
 lap>=0.5.12
-# torch y torchvision se instalan en el Dockerfile con soporte CUDA específico
-# versión sin grafica
-# opencv-python-headless
-opencv-python
+opencv-python-headless
 requests
 huggingface-hub
-# bust cache please

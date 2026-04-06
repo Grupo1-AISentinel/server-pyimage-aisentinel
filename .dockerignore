@@ -1,6 +1,24 @@
-server/chroma_data/
-server/venv/
-venv/
 .git/
+.vscode/
 __pycache__/
 *.pyc
+*.pyo
+venv/
+server/venv/
+.env
+
+# Ignorar la base de datos de ChromaDB
+chroma_data/
+server/chroma_data/
+
+!server/best.pt
+
+# Ignorar videos e imágenes de clientes de prueba
+clients/
+assets/
+*.MOV
+*.mp4
+
+# Ignorar modelos locales (YOLO los descargará si no existen)
+*.pt
+*.pth
